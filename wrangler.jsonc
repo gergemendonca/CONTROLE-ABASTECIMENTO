@@ -1,0 +1,13 @@
+{
+  "name": "controle-abastecimento",
+  "main": "vinext/server/fetch-handler",
+  "compatibility_date": "2026-09-24",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "controle-abastecimento-db",
+      "database_id": "SUBSTITUA_PELO_ID_DO_BANCO_D1"
+    }
+  ]
+}
