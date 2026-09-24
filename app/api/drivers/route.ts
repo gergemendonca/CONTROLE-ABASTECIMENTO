@@ -1,0 +1,4 @@
+import { env } from 'cloudflare:workers';
+export const dynamic='force-dynamic';
+export async function GET(){try{const r=await env.DB!.prepare('SELECT id,name FROM drivers ORDER BY name COLLATE NOCASE').all();return Response.json({drivers:r.results})}catch{return Response.json({error:'Motoristas indisponíveis.'},{status:503})}}
+export async function POST(req:Request){try{const {name}=await req.json() as {name?:string};const clean=name?.trim();if(!clean||clean.length>100)return Response.json({error:'Informe o nome do motorista.'},{status:400});const driver=await env.DB!.prepare('INSERT INTO drivers (name) VALUES (?) RETURNING id,name').bind(clean).first();return Response.json({driver},{status:201})}catch{return Response.json({error:'Não foi possível cadastrar. Verifique se o motorista já existe.'},{status:409})}}

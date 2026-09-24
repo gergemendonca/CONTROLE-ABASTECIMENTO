@@ -1,0 +1,4 @@
+import { env } from 'cloudflare:workers';
+export const dynamic='force-dynamic';
+export async function GET(){try{const result=await env.DB!.prepare('SELECT id, label FROM vehicles ORDER BY label').all();return Response.json({vehicles:result.results})}catch{return Response.json({error:'Lista indisponível.'},{status:503})}}
+export async function POST(req:Request){try{const {label}=await req.json() as {label?:string};const clean=label?.trim();if(!clean||clean.length>60)return Response.json({error:'Informe o número ou a placa do veículo.'},{status:400});const result=await env.DB!.prepare('INSERT INTO vehicles (label) VALUES (?) RETURNING id, label').bind(clean).first();return Response.json({vehicle:result},{status:201})}catch{return Response.json({error:'Não foi possível cadastrar. Verifique se o veículo já existe.'},{status:409})}}
