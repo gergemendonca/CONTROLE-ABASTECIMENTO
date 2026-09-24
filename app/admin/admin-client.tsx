@@ -18,7 +18,20 @@ export default function AdminClient(){
  function edit(t:Trip){setEditing(t.id);setCar(String(t.vehicleId));setDepartureDate(t.departureDate);setArrivalDate(t.arrivalDate);setRoute(t.route);setMsg('Editando a viagem selecionada.');window.scrollTo({top:0,behavior:'smooth'})}
  async function remove(t:Trip){const r=await fetch('/api/trips/'+t.id,{method:'DELETE',cache:'no-store'}),x:any=await r.json().catch(()=>({}));if(!r.ok)return setMsg(x.error||'Não foi possível apagar.');setTrips(list=>list.filter(i=>i.id!==t.id));setConfirmId(null);setMsg('Viagem apagada e removida da lista.')}
  async function saveContact(e:React.FormEvent){e.preventDefault();const r=await fetch('/api/contacts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:contactName,phone:contactPhone})}),x:any=await r.json();if(!r.ok)return setMsg(x.error||'Não foi possível cadastrar o contato.');setContacts(list=>[...list,x.contact]);setContactName('');setContactPhone('');setMsg('Contato WhatsApp cadastrado.')}
- async function startRequest(){try{const r=await fetch('/api/fuel-request-trips',{cache:'no-store'}),x:any=await r.json();if(!r.ok)return setMsg(x.error||'Não foi possível carregar as viagens.');setPending(x.trips||[]);setSelected([]);setDetails({});setRecipients([]);setRequestStep(1);setMsg('');window.scrollTo({top:0,behavior:'smooth'})}catch{setMsg('Não foi possível carregar as viagens. Atualize a página e tente novamente.')}}
+ // A lista de viagens já é carregada ao abrir o Adm. Reutilizá-la aqui evita
+ // uma segunda requisição/navegação justamente quando o usuário toca em
+ // "Solicitar abastecimento" (ponto que causava a página quebrada).
+ function startRequest(){
+  const currentDay=new Date().toISOString().slice(0,10);
+  const available=trips.filter(t=>(t.arrivalDate||t.departureDate)>=currentDay);
+  setPending(available);
+  setSelected([]);
+  setDetails({});
+  setRecipients([]);
+  setRequestStep(1);
+  setMsg('');
+  window.scrollTo({top:0,behavior:'smooth'});
+ }
  function toggleTrip(id:number){setSelected(list=>list.includes(id)?list.filter(x=>x!==id):[...list,id])}
  async function leaveAdmin(){await fetch('/api/admin-session',{method:'DELETE'});window.location.assign('/')}
  function proceedDetails(){if(!selected.length)return setMsg('Selecione pelo menos uma viagem.');const next:Record<number,Detail>={};selected.forEach(id=>next[id]=details[id]||{liters:'',km:''});setDetails(next);setMsg('');setRequestStep(2)}
