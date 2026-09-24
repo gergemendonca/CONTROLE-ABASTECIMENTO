@@ -1,0 +1,10 @@
+'use client';
+
+import {useEffect,useState} from 'react';
+type Contact={id:number;name:string;phone:string};
+
+export default function Destinatarios(){
+ const [contacts,setContacts]=useState<Contact[]>([]),[params,setParams]=useState<[string,string][]>([]),[message,setMessage]=useState('Carregando contatos...');
+ useEffect(()=>{setParams(Array.from(new URLSearchParams(window.location.search).entries()));void (async()=>{try{const response=await fetch('/api/contacts',{cache:'no-store'}),data:any=await response.json();if(!response.ok){setMessage(data.error||'Não foi possível carregar os contatos.');return}setContacts(data.contacts||[]);setMessage('')}catch{setMessage('Não foi possível carregar os contatos.')}})()},[]);
+ return <main className="min-h-screen bg-slate-50 p-5"><div className="mx-auto max-w-xl"><button type="button" onClick={()=>window.history.back()} className="mb-5 h-14 w-full rounded-xl border-2 border-slate-500 px-3 text-lg font-bold text-slate-700">Voltar para litros e KM</button><section className="rounded-3xl border-2 border-[#096a9b] bg-white p-6 shadow"><h1 className="text-3xl font-bold">Destinatários</h1><p className="mt-3 text-lg text-slate-600">Marque um ou vários contatos. Haverá apenas um botão para abrir o WhatsApp.</p><form action="/api/fuel-request-message" method="get" className="mt-5 space-y-3">{params.map(([name,value],index)=><input key={index} type="hidden" name={name} value={value}/>)}{contacts.map(contact=><label key={contact.id} className="flex cursor-pointer gap-3 rounded-xl border p-4 text-lg"><input type="checkbox" name="contact" value={contact.id} className="h-6 w-6 accent-[#178045]"/><span><strong>{contact.name}</strong><br/>{contact.phone}</span></label>)}<button type="submit" className="mt-4 min-h-14 h-auto w-full rounded-xl bg-[#178045] px-4 py-2 text-lg font-bold leading-tight text-white sm:text-xl">Abrir WhatsApp para enviar</button></form></section>{message&&<p role="status" className="mt-5 rounded-xl bg-sky-50 p-4 text-lg">{message}</p>}</div></main>
+}
