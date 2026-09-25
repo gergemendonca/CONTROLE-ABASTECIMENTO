@@ -1,17 +1,296 @@
-'use client';
+"use client";
 
-import {useEffect,useState} from 'react';
+import { useEffect, useState } from "react";
 
-type User={id:number;name:string;username:string;groupName:'motorista'|'adm'|'gerencia';roles:string;active:number};
-const labels:{[key:string]:string}={admin:'Administrador',solicitante:'Solicitante de abastecimento',autorizador:'Autorizador',avisado:'Recebedor de avisos'};
+type User = {
+  id: number;
+  name: string;
+  username: string;
+  groupName: "motorista" | "adm" | "gerencia";
+  roles: string;
+  active: number;
+};
+const labels: { [key: string]: string } = {
+  admin: "Administrador",
+  solicitante: "Solicitante de abastecimento",
+  autorizador: "Autorizador",
+  avisado: "Recebedor de avisos",
+};
 
-export default function Configuracoes(){
- const [users,setUsers]=useState<User[]>([]),[msg,setMsg]=useState(''),[name,setName]=useState(''),[username,setUsername]=useState(''),[password,setPassword]=useState(''),[groupName,setGroupName]=useState<User['groupName']>('motorista'),[selected,setSelected]=useState<string[]>(['avisado']),[active,setActive]=useState(true),[editing,setEditing]=useState<number|null>(null);
- async function load(){const response=await fetch('/api/users',{cache:'no-store'}),data:any=await response.json();if(!response.ok)throw Error(data.error);setUsers(data.users||[])}
- useEffect(()=>{void load().catch((e:Error)=>setMsg(e.message))},[]);
- function toggle(role:string){setSelected(value=>value.includes(role)?value.filter(item=>item!==role):[...value,role])}
- function clearUser(){setName('');setUsername('');setPassword('');setGroupName('motorista');setSelected(['avisado']);setActive(true);setEditing(null)}
- function editUser(user:User){setEditing(user.id);setName(user.name);setUsername(user.username);setPassword('');setGroupName(user.groupName||'motorista');setSelected(JSON.parse(user.roles));setActive(!!user.active);setMsg(`Editando ${user.name}. Altere o grupo ou as permissões e salve.`);window.scrollTo({top:0,behavior:'smooth'})}
- async function saveUser(event:React.FormEvent){event.preventDefault();const response=await fetch(editing?`/api/users/${editing}`:'/api/users',{method:editing?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,username,password,groupName,userRoles:selected,active})}),data:any=await response.json();if(!response.ok)return setMsg(data.error||'Não foi possível salvar.');const wasEditing=editing!==null;clearUser();await load();setMsg(wasEditing?'Usuário, grupo e permissões atualizados.':'Usuário cadastrado.')}
- return <main className="min-h-screen bg-slate-50 p-5"><div className="mx-auto max-w-xl"><button type="button" onClick={()=>history.back()} className="mb-5 min-h-12 rounded-xl border px-5 py-2 text-lg font-bold">Voltar para Adm</button><h1 className="text-3xl font-bold">⚙ Configurações</h1><p className="mt-2 text-lg text-slate-600">Cadastre grupos, usuários e funções.</p><section className="mt-6 rounded-3xl bg-white p-6 shadow"><h2 className="text-2xl font-bold">{editing?'Editar usuário':'Novo usuário'}</h2><form onSubmit={saveUser} className="mt-5 space-y-3"><input required value={name} onChange={event=>setName(event.target.value)} placeholder="Nome completo" className="h-14 w-full rounded-xl border p-3 text-lg"/><label className="block text-lg font-bold">Grupo<select value={groupName} onChange={event=>setGroupName(event.target.value as User['groupName'])} className="mt-2 h-14 w-full rounded-xl border bg-white p-3 text-lg"><option value="motorista">Motorista</option><option value="adm">Adm</option><option value="gerencia">Gerência</option></select></label><input required autoCapitalize="none" value={username} onChange={event=>setUsername(event.target.value)} placeholder="Usuário para entrar no app" className="h-14 w-full rounded-xl border p-3 text-lg"/><input required={!editing} minLength={password?4:undefined} type="password" value={password} onChange={event=>setPassword(event.target.value)} placeholder={editing?'Nova senha (deixe vazia para manter)':'Senha (mínimo 4 caracteres)'} className="h-14 w-full rounded-xl border p-3 text-lg"/><fieldset className="rounded-xl border p-4"><legend className="px-2 text-lg font-bold">Funções</legend>{Object.entries(labels).map(([role,label])=><label key={role} className="mt-3 flex items-center gap-3 text-lg"><input checked={selected.includes(role)} onChange={()=>toggle(role)} type="checkbox" className="h-5 w-5 accent-[#178045]"/>{label}</label>)}</fieldset>{editing&&<label className="flex items-center gap-3 rounded-xl bg-slate-50 p-3 text-lg"><input checked={active} onChange={event=>setActive(event.target.checked)} type="checkbox" className="h-5 w-5 accent-[#178045]"/>Usuário ativo</label>}<div className="flex gap-3"><button className="min-h-12 flex-1 rounded-xl bg-[#178045] px-3 py-2 text-lg font-bold text-white">{editing?'Salvar alterações':'Cadastrar usuário'}</button>{editing&&<button type="button" onClick={()=>{clearUser();setMsg('Edição de usuário cancelada.')}} className="min-h-12 rounded-xl border px-4 py-2 text-lg font-bold">Cancelar</button>}</div></form>{users.length>0&&<div className="mt-6 space-y-2">{users.map(user=><article key={user.id} className="rounded-xl bg-slate-50 p-3 text-lg"><p><strong>{user.name}</strong> · {user.username}{!user.active&&' · Inativo'}</p><small className="font-bold">{user.groupName==='gerencia'?'Gerência':user.groupName==='adm'?'Adm':'Motorista'}</small><br/><small>{JSON.parse(user.roles).map((role:string)=>labels[role]||role).join(' · ')}</small><button type="button" onClick={()=>editUser(user)} className="mt-3 min-h-10 rounded-lg bg-[#e7b629] px-4 py-2 text-base font-bold text-[#2c2509]">Editar</button></article>)}</div>}</section>{msg&&<p role="status" className="mt-5 rounded-xl bg-sky-50 p-4 text-lg">{msg}</p>}</div></main>
+export default function Configuracoes() {
+  const [users, setUsers] = useState<User[]>([]),
+    [msg, setMsg] = useState(""),
+    [name, setName] = useState(""),
+    [username, setUsername] = useState(""),
+    [password, setPassword] = useState(""),
+    [groupName, setGroupName] = useState<User["groupName"]>("motorista"),
+    [selected, setSelected] = useState<string[]>(["avisado"]),
+    [active, setActive] = useState(true),
+    [editing, setEditing] = useState<number | null>(null),
+    [deleteId, setDeleteId] = useState<number | null>(null);
+  async function load() {
+    const response = await fetch("/api/users", { cache: "no-store" }),
+      data: any = await response.json();
+    if (!response.ok) throw Error(data.error);
+    setUsers(data.users || []);
+  }
+  useEffect(() => {
+    void load().catch((e: Error) => setMsg(e.message));
+  }, []);
+  function toggle(role: string) {
+    setSelected((value) =>
+      value.includes(role)
+        ? value.filter((item) => item !== role)
+        : [...value, role],
+    );
+  }
+  function clearUser() {
+    setName("");
+    setUsername("");
+    setPassword("");
+    setGroupName("motorista");
+    setSelected(["avisado"]);
+    setActive(true);
+    setEditing(null);
+  }
+  function editUser(user: User) {
+    setEditing(user.id);
+    setName(user.name);
+    setUsername(user.username);
+    setPassword("");
+    setGroupName(user.groupName || "motorista");
+    setSelected(JSON.parse(user.roles));
+    setActive(!!user.active);
+    setMsg(`Editando ${user.name}. Altere o grupo ou as permissões e salve.`);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  async function saveUser(event: React.FormEvent) {
+    event.preventDefault();
+    const response = await fetch(
+        editing ? `/api/users/${editing}` : "/api/users",
+        {
+          method: editing ? "PUT" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name,
+            username,
+            password,
+            groupName,
+            userRoles: selected,
+            active,
+          }),
+        },
+      ),
+      data: any = await response.json();
+    if (!response.ok) return setMsg(data.error || "Não foi possível salvar.");
+    const wasEditing = editing !== null;
+    clearUser();
+    await load();
+    setMsg(
+      wasEditing
+        ? "Usuário, grupo e permissões atualizados."
+        : "Usuário cadastrado.",
+    );
+  }
+  async function removeUser(user: User) {
+    const response = await fetch(`/api/users/${user.id}`, { method: "DELETE" }),
+      data: any = await response.json();
+    if (!response.ok) return setMsg(data.error || "Não foi possível apagar o usuário.");
+    if (editing === user.id) clearUser();
+    setDeleteId(null);
+    await load();
+    setMsg("Usuário apagado.");
+  }
+  const protectedUser = (user: User) =>
+    user.name
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim()
+      .toLowerCase() === "george mendonca";
+  return (
+    <main className="min-h-screen bg-slate-50 p-5">
+      <div className="mx-auto max-w-xl">
+        <button
+          type="button"
+          onClick={() => history.back()}
+          className="mb-5 min-h-12 rounded-xl border px-5 py-2 text-lg font-bold"
+        >
+          Voltar para Adm
+        </button>
+        <h1 className="text-3xl font-bold">⚙ Configurações</h1>
+        <p className="mt-2 text-lg text-slate-600">
+          Cadastre grupos, usuários e funções.
+        </p>
+        <section className="mt-6 rounded-3xl bg-white p-6 shadow">
+          <h2 className="text-2xl font-bold">
+            {editing ? "Editar usuário" : "Novo usuário"}
+          </h2>
+          <form onSubmit={saveUser} className="mt-5 space-y-3">
+            <input
+              required
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Nome completo"
+              className="h-14 w-full rounded-xl border p-3 text-lg"
+            />
+            <label className="block text-lg font-bold">
+              Grupo
+              <select
+                value={groupName}
+                onChange={(event) =>
+                  setGroupName(event.target.value as User["groupName"])
+                }
+                className="mt-2 h-14 w-full rounded-xl border bg-white p-3 text-lg"
+              >
+                <option value="motorista">Motorista</option>
+                <option value="adm">Adm</option>
+                <option value="gerencia">Gerência</option>
+              </select>
+            </label>
+            <input
+              required
+              autoCapitalize="none"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              placeholder="Usuário para entrar no app"
+              className="h-14 w-full rounded-xl border p-3 text-lg"
+            />
+            <input
+              required={!editing}
+              minLength={password ? 4 : undefined}
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder={
+                editing
+                  ? "Nova senha (deixe vazia para manter)"
+                  : "Senha (mínimo 4 caracteres)"
+              }
+              className="h-14 w-full rounded-xl border p-3 text-lg"
+            />
+            <fieldset className="rounded-xl border p-4">
+              <legend className="px-2 text-lg font-bold">Funções</legend>
+              {Object.entries(labels).map(([role, label]) => (
+                <label
+                  key={role}
+                  className="mt-3 flex items-center gap-3 text-lg"
+                >
+                  <input
+                    checked={selected.includes(role)}
+                    onChange={() => toggle(role)}
+                    type="checkbox"
+                    className="h-5 w-5 accent-[#178045]"
+                  />
+                  {label}
+                </label>
+              ))}
+            </fieldset>
+            {editing && (
+              <label className="flex items-center gap-3 rounded-xl bg-slate-50 p-3 text-lg">
+                <input
+                  checked={active}
+                  onChange={(event) => setActive(event.target.checked)}
+                  type="checkbox"
+                  className="h-5 w-5 accent-[#178045]"
+                />
+                Usuário ativo
+              </label>
+            )}
+            <div className="flex gap-3">
+              <button className="min-h-12 flex-1 rounded-xl bg-[#178045] px-3 py-2 text-lg font-bold text-white">
+                {editing ? "Salvar alterações" : "Cadastrar usuário"}
+              </button>
+              {editing && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearUser();
+                    setMsg("Edição de usuário cancelada.");
+                  }}
+                  className="min-h-12 rounded-xl border px-4 py-2 text-lg font-bold"
+                >
+                  Cancelar
+                </button>
+              )}
+            </div>
+          </form>
+          {users.length > 0 && (
+            <div className="mt-6 space-y-2">
+              {users.map((user) => (
+                <article
+                  key={user.id}
+                  className="rounded-xl bg-slate-50 p-3 text-lg"
+                >
+                  <p>
+                    <strong>{user.name}</strong> · {user.username}
+                    {!user.active && " · Inativo"}
+                  </p>
+                  <small className="font-bold">
+                    {user.groupName === "gerencia"
+                      ? "Gerência"
+                      : user.groupName === "adm"
+                        ? "Adm"
+                        : "Motorista"}
+                  </small>
+                  <br />
+                  <small>
+                    {JSON.parse(user.roles)
+                      .map((role: string) => labels[role] || role)
+                      .join(" · ")}
+                  </small>
+                  {deleteId === user.id ? (
+                    <div className="mt-3 rounded-xl border-2 border-[#b3262b] bg-red-50 p-3">
+                      <p className="font-bold text-[#7f1d1d]">
+                        Apagar este usuário?
+                      </p>
+                      <div className="mt-3 flex gap-3">
+                        <button
+                          type="button"
+                          onClick={() => void removeUser(user)}
+                          className="min-h-10 rounded-lg bg-[#b3262b] px-4 py-2 text-base font-bold text-white"
+                        >
+                          Confirmar apagar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteId(null)}
+                          className="min-h-10 rounded-lg border px-4 py-2 text-base font-bold"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-3 flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={() => editUser(user)}
+                        className="min-h-10 rounded-lg bg-[#e7b629] px-4 py-2 text-base font-bold text-[#2c2509]"
+                      >
+                        Editar
+                      </button>
+                      {!protectedUser(user) && (
+                        <button
+                          type="button"
+                          onClick={() => setDeleteId(user.id)}
+                          className="min-h-10 rounded-lg bg-[#b3262b] px-4 py-2 text-base font-bold text-white"
+                        >
+                          Apagar
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+        {msg && (
+          <p role="status" className="mt-5 rounded-xl bg-sky-50 p-4 text-lg">
+            {msg}
+          </p>
+        )}
+      </div>
+    </main>
+  );
 }

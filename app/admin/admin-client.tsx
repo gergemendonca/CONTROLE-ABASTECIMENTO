@@ -1,26 +1,508 @@
-'use client';
+"use client";
 
-import {useEffect,useRef,useState} from 'react';
+import { useEffect, useRef, useState } from "react";
 
-type Trip={id:number;vehicleId:number;vehicleLabel:string;departureDate:string;arrivalDate:string;route:string;totalKm:number;userIds:number[]};
-type AppUser={id:number;name:string;groupName:'motorista'|'adm'|'gerencia'};
-type Confirmation={messages:string[];hasConflict:boolean};
-const formatDate=(date:string)=>date.split('-').reverse().join('/');
+type Trip = {
+  id: number;
+  vehicleId: number;
+  vehicleLabel: string;
+  departureDate: string;
+  arrivalDate: string;
+  route: string;
+  totalKm: number;
+  userIds: number[];
+};
+type AppUser = {
+  id: number;
+  name: string;
+  groupName: "motorista" | "adm" | "gerencia";
+};
+type Confirmation = { messages: string[]; hasConflict: boolean };
+const formatDate = (date: string) => date.split("-").reverse().join("/");
 
-export default function AdminClient(){
- const today=new Date().toISOString().slice(0,10),formSectionRef=useRef<HTMLElement>(null);
- const [cars,setCars]=useState<any[]>([]),[trips,setTrips]=useState<Trip[]>([]),[users,setUsers]=useState<AppUser[]>([]);
- const [car,setCar]=useState(''),[departureDate,setDepartureDate]=useState(today),[arrivalDate,setArrivalDate]=useState(today),[route,setRoute]=useState(''),[totalKm,setTotalKm]=useState(''),[selectedDriverIds,setSelectedDriverIds]=useState<number[]>([]),[editing,setEditing]=useState<number|null>(null),[confirmId,setConfirmId]=useState<number|null>(null),[confirmation,setConfirmation]=useState<Confirmation|null>(null),[msg,setMsg]=useState('');
- async function load(){const [carsResponse,tripsResponse,usersResponse]=await Promise.all([fetch('/api/vehicles',{cache:'no-store'}),fetch('/api/trips',{cache:'no-store'}),fetch('/api/users',{cache:'no-store'})]);const carsData:any=await carsResponse.json(),tripsData:any=await tripsResponse.json(),usersData:any=await usersResponse.json();setCars(carsData.vehicles||[]);if(!tripsResponse.ok)throw Error(tripsData.error);setTrips(tripsData.trips||[]);if(usersResponse.ok)setUsers(usersData.users||[])}
- useEffect(()=>{void (async()=>{const setup=await fetch('/api/system/setup',{method:'POST'}),data:any=await setup.json();if(!setup.ok)throw Error(data.error);await load()})().catch((error:Error)=>setMsg(error.message||'Não foi possível carregar os dados.'))},[]);
- const drivers=users.filter(user=>user.groupName==='motorista');
- const driverName=(id:number)=>drivers.find(user=>user.id===id)?.name||'';
- function clear(){setCar('');setDepartureDate(today);setArrivalDate(today);setRoute('');setTotalKm('');setSelectedDriverIds([]);setEditing(null);setConfirmId(null);setConfirmation(null)}
- function overlapping(trip:Trip){return trip.id!==editing&&trip.departureDate<=arrivalDate&&trip.arrivalDate>=departureDate}
- function askBeforeSaving(event:React.FormEvent){event.preventDefault();const messages:string[]=[];if(editing===null&&selectedDriverIds.length===1)messages.push(`Você selecionou apenas ${driverName(selectedDriverIds[0])}. Confirma que será o único motorista desta viagem?`);const currentTrips=trips.filter(overlapping);if(currentTrips.some(trip=>trip.vehicleId===Number(car)))messages.push('Já existe uma viagem para este carro no mesmo período. Há compatibilidade de horário?');const busyDrivers=selectedDriverIds.filter(id=>currentTrips.some(trip=>trip.userIds.includes(id))).map(driverName).filter(Boolean);if(busyDrivers.length)messages.push(`Já existe viagem no mesmo período para: ${busyDrivers.join(', ')}. Há compatibilidade de horário?`);if(messages.length){setConfirmation({messages,hasConflict:currentTrips.some(trip=>trip.vehicleId===Number(car))||busyDrivers.length>0});return}void persist(false)}
- async function persist(allowConflicts:boolean){const wasEditing=editing!==null,response=await fetch(editing?`/api/trips/${editing}`:'/api/trips',{method:editing?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({vehicleId:Number(car),departureDate,arrivalDate,route,totalKm:Number(totalKm),associatedUserIds:selectedDriverIds,allowConflicts})}),data:any=await response.json();if(!response.ok){setConfirmation(null);return setMsg(data.error||'Não foi possível salvar.')}setConfirmation(null);await load();if(wasEditing){setMsg('Viagem atualizada com sucesso.');return}clear();setMsg('Viagem salva com sucesso. O formulário foi limpo para iniciar outro cadastro.');requestAnimationFrame(()=>formSectionRef.current?.scrollIntoView({behavior:'smooth',block:'center'}))}
- function edit(trip:Trip){setEditing(trip.id);setCar(String(trip.vehicleId));setDepartureDate(trip.departureDate);setArrivalDate(trip.arrivalDate);setRoute(trip.route);setTotalKm(String(trip.totalKm||''));setSelectedDriverIds(trip.userIds.filter(id=>drivers.some(driver=>driver.id===id)));setMsg('Editando a viagem selecionada.');formSectionRef.current?.scrollIntoView({behavior:'smooth',block:'start'})}
- async function remove(trip:Trip){const response=await fetch(`/api/trips/${trip.id}`,{method:'DELETE',cache:'no-store'}),data:any=await response.json().catch(()=>({}));if(!response.ok)return setMsg(data.error||'Não foi possível apagar.');setTrips(items=>items.filter(item=>item.id!==trip.id));setConfirmId(null);setMsg('Viagem apagada e removida da lista.')}
- async function leaveAdmin(){await fetch('/api/admin-session',{method:'DELETE'});window.location.assign('/')}
- return <main className="min-h-screen bg-slate-50 p-5"><div className="mx-auto max-w-xl"><div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2"><button type="button" onClick={()=>window.location.assign('/solicitar-abastecimento')} className="h-14 rounded-xl bg-[#096a9b] px-3 text-base font-bold text-white sm:text-lg">Solicitar abastecimento</button><button type="button" onClick={()=>window.location.assign('/admin/configuracoes')} className="h-14 rounded-xl border-2 border-[#096a9b] px-3 text-base font-bold text-[#096a9b] sm:text-lg">⚙ Configurações</button><button type="button" onClick={()=>window.location.assign('/autorizacoes')} className="min-h-20 rounded-xl bg-[#b3262b] px-3 py-3 text-xl font-extrabold leading-tight text-white sm:text-2xl">⛽ AUTORIZAR</button><button type="button" onClick={()=>window.location.assign('/pedidos?status=pending')} className="h-14 rounded-xl bg-[#e7b629] px-3 text-base font-bold text-[#2c2509] sm:text-lg">Pedidos pendentes</button><button type="button" onClick={()=>window.location.assign('/pedidos?status=authorized')} className="h-14 rounded-xl bg-[#178045] px-3 text-base font-bold text-white sm:text-lg">Já autorizados</button><button type="button" onClick={()=>void leaveAdmin()} className="h-14 rounded-xl border-2 border-slate-500 px-3 text-base font-bold text-slate-700 sm:col-span-2 sm:text-lg">Sair para a página inicial</button></div><section ref={formSectionRef} className="rounded-3xl bg-white p-7 shadow"><h1 className="text-3xl font-bold">{editing?'Editar viagem':'Lançar viagem'}</h1><p className="mt-2 text-lg">Área exclusiva do administrador.</p><form onSubmit={askBeforeSaving} className="mt-6 space-y-5"><label className="block text-lg font-bold">Veículo<select value={car} onChange={event=>setCar(event.target.value)} required className="mt-2 h-16 w-full rounded-xl border p-3 text-2xl"><option value="">Selecione</option>{cars.map(item=><option key={item.id} value={item.id}>{item.label}</option>)}</select></label><div className="grid grid-cols-2 gap-4"><label className="block text-lg font-bold">Saída<input type="date" value={departureDate} onChange={event=>{setDepartureDate(event.target.value);if(arrivalDate<event.target.value)setArrivalDate(event.target.value)}} className="mt-2 h-16 w-full rounded-xl border p-3 text-lg"/></label><label className="block text-lg font-bold">Chegada<input type="date" min={departureDate} value={arrivalDate} onChange={event=>setArrivalDate(event.target.value)} className="mt-2 h-16 w-full rounded-xl border p-3 text-lg"/></label></div><label className="block text-lg font-bold">Quilometragem total da viagem<input required min="1" inputMode="numeric" type="number" value={totalKm} onChange={event=>setTotalKm(event.target.value)} placeholder="Ex.: 320" className="mt-2 h-16 w-full rounded-xl border p-3 text-2xl"/></label><label className="block text-lg font-bold">Roteiro<textarea value={route} onChange={event=>setRoute(event.target.value)} required maxLength={300} className="mt-2 min-h-32 w-full rounded-xl border p-3 text-2xl"/></label><fieldset className="rounded-2xl border p-4"><legend className="px-2 text-lg font-bold">Motoristas associados à viagem</legend><p className="mb-3 text-base text-slate-600">Selecione até 3 motoristas. Adm e Gerência são associados automaticamente.</p>{drivers.length===0?<p className="text-base">Cadastre motoristas em Configurações.</p>:<div className="space-y-2">{drivers.map(user=><label key={user.id} className="flex items-center gap-3 rounded-xl bg-slate-50 p-3 text-lg"><input type="checkbox" checked={selectedDriverIds.includes(user.id)} disabled={!selectedDriverIds.includes(user.id)&&selectedDriverIds.length>=3} onChange={event=>setSelectedDriverIds(ids=>event.target.checked?[...ids,user.id]:ids.filter(id=>id!==user.id))} className="h-5 w-5 accent-[#178045] disabled:opacity-40"/><span>{user.name}</span></label>)}</div>}</fieldset><div className="flex gap-3"><button className="h-14 flex-1 rounded-xl bg-[#178045] text-xl font-bold text-white">{editing?'Salvar alterações':'Salvar viagem'}</button>{editing&&<button type="button" onClick={()=>{clear();setMsg('Edição cancelada. O formulário foi limpo.')}} className="h-14 rounded-xl border px-4 text-lg">Cancelar</button>}</div></form>{msg&&<p role="status" className="mt-5 rounded-xl bg-sky-50 p-4 text-lg">{msg}</p>}</section>{confirmation&&<div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-5"><section role="dialog" aria-modal="true" className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl"><h2 className="text-2xl font-bold text-[#b3262b]">Confirmação necessária</h2><div className="mt-4 space-y-3 text-lg">{confirmation.messages.map((message,index)=><p key={index} className="rounded-xl bg-amber-50 p-3">{message}</p>)}</div><p className="mt-4 text-base text-slate-600">Se não houver compatibilidade de horário, cancele. A viagem não será registrada.</p><div className="mt-6 grid gap-3 sm:grid-cols-2"><button type="button" onClick={()=>void persist(confirmation.hasConflict)} className="min-h-14 rounded-xl bg-[#178045] px-4 py-2 text-lg font-bold text-white">{confirmation.hasConflict?'Sim, há compatibilidade':'Sim, confirmar'}</button><button type="button" onClick={()=>{setConfirmation(null);setMsg('Cadastro cancelado. Nenhuma viagem foi registrada.')}} className="min-h-14 rounded-xl border-2 border-[#b3262b] px-4 py-2 text-lg font-bold text-[#b3262b]">Não, cancelar</button></div></section></div>}<section className="mt-7"><h2 className="mb-2 text-2xl font-bold">Viagens lançadas e salvas</h2><p className="mb-4 text-base text-slate-600">A mais recentemente cadastrada aparece no topo.</p>{trips.length===0?<p className="rounded-2xl bg-white p-5 text-lg">Nenhuma viagem salva.</p>:<div className="space-y-4">{trips.map(trip=>{const names=trip.userIds.filter(id=>drivers.some(driver=>driver.id===id)).map(driverName).filter(Boolean);return <article key={trip.id} className="rounded-2xl bg-white p-5 shadow-sm"><p className="text-xl font-bold">{trip.vehicleLabel}</p><p className="mt-1 text-lg">{formatDate(trip.departureDate)} até {formatDate(trip.arrivalDate)}</p><p className="mt-2 text-lg text-slate-700">{trip.route}</p><p className="mt-2 text-lg"><strong>Quilometragem total:</strong> {Number(trip.totalKm||0).toLocaleString('pt-BR')} km</p><p className="mt-2 text-lg"><strong>Motorista{names.length===1?'':'s'}:</strong> {names.length?names.join(', '):'Nenhum motorista associado'}</p>{confirmId===trip.id?<div className="mt-5 rounded-xl border-2 border-[#b3262b] bg-red-50 p-4"><p className="text-lg font-bold text-[#7f1d1d]">Deseja apagar esta viagem?</p><div className="mt-4 flex gap-3"><button type="button" onClick={()=>void remove(trip)} className="h-12 rounded-xl bg-[#b3262b] px-5 text-lg font-bold text-white">Confirmar apagar</button><button type="button" onClick={()=>setConfirmId(null)} className="h-12 rounded-xl border px-5 text-lg font-bold">Cancelar</button></div></div>:<div className="mt-5 flex gap-4"><button type="button" onClick={()=>edit(trip)} className="h-12 rounded-xl bg-[#e7b629] px-5 text-lg font-bold text-[#2c2509]">Editar</button><button type="button" onClick={()=>setConfirmId(trip.id)} className="h-12 rounded-xl bg-[#b3262b] px-5 text-lg font-bold text-white">Apagar</button></div>}</article>})}</div>}</section></div></main>
+export default function AdminClient() {
+  const today = new Date().toISOString().slice(0, 10),
+    formSectionRef = useRef<HTMLElement>(null);
+  const [cars, setCars] = useState<any[]>([]),
+    [trips, setTrips] = useState<Trip[]>([]),
+    [users, setUsers] = useState<AppUser[]>([]);
+  const [car, setCar] = useState(""),
+    [departureDate, setDepartureDate] = useState(today),
+    [arrivalDate, setArrivalDate] = useState(today),
+    [route, setRoute] = useState(""),
+    [totalKm, setTotalKm] = useState(""),
+    [selectedDriverIds, setSelectedDriverIds] = useState<number[]>([]),
+    [editing, setEditing] = useState<number | null>(null),
+    [confirmId, setConfirmId] = useState<number | null>(null),
+    [confirmation, setConfirmation] = useState<Confirmation | null>(null),
+    [msg, setMsg] = useState("");
+  async function load() {
+    const [carsResponse, tripsResponse, usersResponse] = await Promise.all([
+      fetch("/api/vehicles", { cache: "no-store" }),
+      fetch("/api/trips", { cache: "no-store" }),
+      fetch("/api/users", { cache: "no-store" }),
+    ]);
+    const carsData: any = await carsResponse.json(),
+      tripsData: any = await tripsResponse.json(),
+      usersData: any = await usersResponse.json();
+    setCars(carsData.vehicles || []);
+    if (!tripsResponse.ok) throw Error(tripsData.error);
+    setTrips(tripsData.trips || []);
+    if (usersResponse.ok) setUsers(usersData.users || []);
+  }
+  useEffect(() => {
+    void (async () => {
+      const setup = await fetch("/api/system/setup", { method: "POST" }),
+        data: any = await setup.json();
+      if (!setup.ok) throw Error(data.error);
+      await load();
+    })().catch((error: Error) =>
+      setMsg(error.message || "Não foi possível carregar os dados."),
+    );
+  }, []);
+  const drivers = users.filter((user) => user.groupName === "motorista");
+  const driverName = (id: number) =>
+    drivers.find((user) => user.id === id)?.name || "";
+  function clear() {
+    setCar("");
+    setDepartureDate(today);
+    setArrivalDate(today);
+    setRoute("");
+    setTotalKm("");
+    setSelectedDriverIds([]);
+    setEditing(null);
+    setConfirmId(null);
+    setConfirmation(null);
+  }
+  function overlapping(trip: Trip) {
+    return (
+      trip.id !== editing &&
+      trip.departureDate <= arrivalDate &&
+      trip.arrivalDate >= departureDate
+    );
+  }
+  function askBeforeSaving(event: React.FormEvent) {
+    event.preventDefault();
+    const messages: string[] = [];
+    if (editing === null && selectedDriverIds.length === 1)
+      messages.push(
+        `Você selecionou apenas ${driverName(selectedDriverIds[0])}. Confirma que será o único motorista desta viagem?`,
+      );
+    const currentTrips = trips.filter(overlapping);
+    if (currentTrips.some((trip) => trip.vehicleId === Number(car)))
+      messages.push(
+        "Já existe uma viagem para este carro no mesmo período. Há compatibilidade de horário?",
+      );
+    const busyDrivers = selectedDriverIds
+      .filter((id) => currentTrips.some((trip) => trip.userIds.includes(id)))
+      .map(driverName)
+      .filter(Boolean);
+    if (busyDrivers.length)
+      messages.push(
+        `Já existe viagem no mesmo período para: ${busyDrivers.join(", ")}. Há compatibilidade de horário?`,
+      );
+    if (messages.length) {
+      setConfirmation({
+        messages,
+        hasConflict:
+          currentTrips.some((trip) => trip.vehicleId === Number(car)) ||
+          busyDrivers.length > 0,
+      });
+      return;
+    }
+    void persist(false);
+  }
+  async function persist(allowConflicts: boolean) {
+    const wasEditing = editing !== null,
+      response = await fetch(editing ? `/api/trips/${editing}` : "/api/trips", {
+        method: editing ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          vehicleId: Number(car),
+          departureDate,
+          arrivalDate,
+          route,
+          totalKm: Number(totalKm),
+          associatedUserIds: selectedDriverIds,
+          allowConflicts,
+        }),
+      }),
+      data: any = await response.json();
+    if (!response.ok) {
+      setConfirmation(null);
+      return setMsg(data.error || "Não foi possível salvar.");
+    }
+    setConfirmation(null);
+    await load();
+    if (wasEditing) {
+      setMsg("Viagem atualizada com sucesso.");
+      return;
+    }
+    clear();
+    setMsg(
+      "Viagem salva com sucesso. O formulário foi limpo para iniciar outro cadastro.",
+    );
+    requestAnimationFrame(() =>
+      formSectionRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      }),
+    );
+  }
+  function edit(trip: Trip) {
+    setEditing(trip.id);
+    setCar(String(trip.vehicleId));
+    setDepartureDate(trip.departureDate);
+    setArrivalDate(trip.arrivalDate);
+    setRoute(trip.route);
+    setTotalKm(String(trip.totalKm || ""));
+    setSelectedDriverIds(
+      trip.userIds.filter((id) => drivers.some((driver) => driver.id === id)),
+    );
+    setMsg("Editando a viagem selecionada.");
+    formSectionRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }
+  async function remove(trip: Trip) {
+    const response = await fetch(`/api/trips/${trip.id}`, {
+        method: "DELETE",
+        cache: "no-store",
+      }),
+      data: any = await response.json().catch(() => ({}));
+    if (!response.ok) return setMsg(data.error || "Não foi possível apagar.");
+    setTrips((items) => items.filter((item) => item.id !== trip.id));
+    setConfirmId(null);
+    setMsg("Viagem apagada e removida da lista.");
+  }
+  async function leaveAdmin() {
+    await fetch("/api/admin-session", { method: "DELETE" });
+    window.location.assign("/");
+  }
+  return (
+    <main className="min-h-screen bg-slate-50 p-5">
+      <div className="mx-auto max-w-xl">
+        <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={() => window.location.assign("/admin/configuracoes")}
+            className="h-14 rounded-xl border-2 border-[#096a9b] px-3 text-base font-bold text-[#096a9b] sm:text-lg"
+          >
+            ⚙ Configurações
+          </button>
+          <button
+            type="button"
+            onClick={() => window.location.assign("/solicitar-abastecimento")}
+            className="h-14 rounded-xl bg-[#096a9b] px-3 text-base font-bold text-white sm:text-lg"
+          >
+            Solicitar abastecimento
+          </button>
+          <button
+            type="button"
+            onClick={() => window.location.assign("/autorizacoes")}
+            className="min-h-20 rounded-xl bg-[#b3262b] px-3 py-3 text-xl font-extrabold leading-tight text-white sm:text-2xl"
+          >
+            ⛽ AUTORIZAR
+          </button>
+          <button
+            type="button"
+            onClick={() => window.location.assign("/pedidos?status=pending")}
+            className="h-14 rounded-xl bg-[#e7b629] px-3 text-base font-bold text-[#2c2509] sm:text-lg"
+          >
+            Pedidos pendentes
+          </button>
+          <button
+            type="button"
+            onClick={() => window.location.assign("/pedidos?status=authorized")}
+            className="h-14 rounded-xl bg-[#178045] px-3 text-base font-bold text-white sm:text-lg"
+          >
+            Já autorizados
+          </button>
+          <button
+            type="button"
+            onClick={() => window.location.assign("/admin/abastecimentos-feitos")}
+            className="h-14 rounded-xl bg-[#103b58] px-3 text-base font-bold text-white sm:text-lg"
+          >
+            Abastecimentos feitos
+          </button>
+          <button
+            type="button"
+            onClick={() => void leaveAdmin()}
+            className="h-14 rounded-xl border-2 border-slate-500 px-3 text-base font-bold text-slate-700 sm:col-span-2 sm:text-lg"
+          >
+            Sair para a página inicial
+          </button>
+        </div>
+        <section
+          ref={formSectionRef}
+          className="rounded-3xl bg-white p-7 shadow"
+        >
+          <h1 className="text-3xl font-bold">
+            {editing ? "Editar viagem" : "Lançar viagem"}
+          </h1>
+          <p className="mt-2 text-lg">Área exclusiva do administrador.</p>
+          <form onSubmit={askBeforeSaving} className="mt-6 space-y-5">
+            <label className="block text-lg font-bold">
+              Veículo
+              <select
+                value={car}
+                onChange={(event) => setCar(event.target.value)}
+                required
+                className="mt-2 h-16 w-full rounded-xl border p-3 text-2xl"
+              >
+                <option value="">Selecione</option>
+                {cars.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="grid grid-cols-2 gap-5">
+              <label className="block min-w-0 text-lg font-bold">
+                Saída
+                <input
+                  type="date"
+                  value={departureDate}
+                  onChange={(event) => {
+                    setDepartureDate(event.target.value);
+                    if (arrivalDate < event.target.value)
+                      setArrivalDate(event.target.value);
+                  }}
+                  className="mt-2 h-16 min-w-0 w-full rounded-xl border p-3 text-lg"
+                />
+              </label>
+              <label className="block min-w-0 text-lg font-bold">
+                Chegada
+                <input
+                  type="date"
+                  min={departureDate}
+                  value={arrivalDate}
+                  onChange={(event) => setArrivalDate(event.target.value)}
+                  className="mt-2 h-16 min-w-0 w-full rounded-xl border p-3 text-lg"
+                />
+              </label>
+            </div>
+            <label className="block text-lg font-bold">
+              Quilometragem total da viagem
+              <input
+                required
+                min="1"
+                inputMode="numeric"
+                type="number"
+                value={totalKm}
+                onChange={(event) => setTotalKm(event.target.value)}
+                placeholder="Ex.: 320"
+                className="mt-2 h-16 w-full rounded-xl border p-3 text-2xl"
+              />
+            </label>
+            <label className="block text-lg font-bold">
+              Roteiro
+              <textarea
+                value={route}
+                onChange={(event) => setRoute(event.target.value)}
+                required
+                maxLength={300}
+                className="mt-2 min-h-32 w-full rounded-xl border p-3 text-2xl"
+              />
+            </label>
+            <fieldset className="rounded-2xl border p-4">
+              <legend className="px-2 text-lg font-bold">
+                Motoristas associados à viagem
+              </legend>
+              <p className="mb-3 text-base text-slate-600">
+                Selecione até 3 motoristas. Adm e Gerência são associados
+                automaticamente.
+              </p>
+              {drivers.length === 0 ? (
+                <p className="text-base">
+                  Cadastre motoristas em Configurações.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {drivers.map((user) => (
+                    <label
+                      key={user.id}
+                      className="flex items-center gap-3 rounded-xl bg-slate-50 p-3 text-lg"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedDriverIds.includes(user.id)}
+                        disabled={
+                          !selectedDriverIds.includes(user.id) &&
+                          selectedDriverIds.length >= 3
+                        }
+                        onChange={(event) =>
+                          setSelectedDriverIds((ids) =>
+                            event.target.checked
+                              ? [...ids, user.id]
+                              : ids.filter((id) => id !== user.id),
+                          )
+                        }
+                        className="h-5 w-5 accent-[#178045] disabled:opacity-40"
+                      />
+                      <span>{user.name}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </fieldset>
+            <div className="flex gap-3">
+              <button className="h-14 flex-1 rounded-xl bg-[#178045] text-xl font-bold text-white">
+                {editing ? "Salvar alterações" : "Salvar viagem"}
+              </button>
+              {editing && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    clear();
+                    setMsg("Edição cancelada. O formulário foi limpo.");
+                  }}
+                  className="h-14 rounded-xl border px-4 text-lg"
+                >
+                  Cancelar
+                </button>
+              )}
+            </div>
+          </form>
+          {msg && (
+            <p role="status" className="mt-5 rounded-xl bg-sky-50 p-4 text-lg">
+              {msg}
+            </p>
+          )}
+        </section>
+        {confirmation && (
+          <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-5">
+            <section
+              role="dialog"
+              aria-modal="true"
+              className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl"
+            >
+              <h2 className="text-2xl font-bold text-[#b3262b]">
+                Confirmação necessária
+              </h2>
+              <div className="mt-4 space-y-3 text-lg">
+                {confirmation.messages.map((message, index) => (
+                  <p key={index} className="rounded-xl bg-amber-50 p-3">
+                    {message}
+                  </p>
+                ))}
+              </div>
+              <p className="mt-4 text-base text-slate-600">
+                Se não houver compatibilidade de horário, cancele. A viagem não
+                será registrada.
+              </p>
+              <div className="mt-6 grid gap-3 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => void persist(confirmation.hasConflict)}
+                  className="min-h-14 rounded-xl bg-[#178045] px-4 py-2 text-lg font-bold text-white"
+                >
+                  {confirmation.hasConflict
+                    ? "Sim, há compatibilidade"
+                    : "Sim, confirmar"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmation(null);
+                    setMsg(
+                      "Cadastro cancelado. Nenhuma viagem foi registrada.",
+                    );
+                  }}
+                  className="min-h-14 rounded-xl border-2 border-[#b3262b] px-4 py-2 text-lg font-bold text-[#b3262b]"
+                >
+                  Não, cancelar
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
+        <section className="mt-7">
+          <h2 className="mb-2 text-2xl font-bold">Viagens lançadas e salvas</h2>
+          <p className="mb-4 text-base text-slate-600">
+            A mais recentemente cadastrada aparece no topo.
+          </p>
+          {trips.length === 0 ? (
+            <p className="rounded-2xl bg-white p-5 text-lg">
+              Nenhuma viagem salva.
+            </p>
+          ) : (
+            <div className="space-y-4">
+              {trips.map((trip) => {
+                const names = trip.userIds
+                  .filter((id) => drivers.some((driver) => driver.id === id))
+                  .map(driverName)
+                  .filter(Boolean);
+                return (
+                  <article
+                    key={trip.id}
+                    className="rounded-2xl bg-white p-5 shadow-sm"
+                  >
+                    <p className="text-xl font-bold">{trip.vehicleLabel}</p>
+                    <p className="mt-1 text-lg">
+                      {formatDate(trip.departureDate)} até{" "}
+                      {formatDate(trip.arrivalDate)}
+                    </p>
+                    <p className="mt-2 text-lg text-slate-700">{trip.route}</p>
+                    <p className="mt-2 text-lg">
+                      <strong>Quilometragem total:</strong>{" "}
+                      {Number(trip.totalKm || 0).toLocaleString("pt-BR")} km
+                    </p>
+                    <p className="mt-2 text-lg">
+                      <strong>Motorista{names.length === 1 ? "" : "s"}:</strong>{" "}
+                      {names.length
+                        ? names.join(", ")
+                        : "Nenhum motorista associado"}
+                    </p>
+                    {confirmId === trip.id ? (
+                      <div className="mt-5 rounded-xl border-2 border-[#b3262b] bg-red-50 p-4">
+                        <p className="text-lg font-bold text-[#7f1d1d]">
+                          Deseja apagar esta viagem?
+                        </p>
+                        <div className="mt-4 flex gap-3">
+                          <button
+                            type="button"
+                            onClick={() => void remove(trip)}
+                            className="h-12 rounded-xl bg-[#b3262b] px-5 text-lg font-bold text-white"
+                          >
+                            Confirmar apagar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmId(null)}
+                            className="h-12 rounded-xl border px-5 text-lg font-bold"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-5 flex gap-4">
+                        <button
+                          type="button"
+                          onClick={() => edit(trip)}
+                          className="h-12 rounded-xl bg-[#e7b629] px-5 text-lg font-bold text-[#2c2509]"
+                        >
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmId(trip.id)}
+                          className="h-12 rounded-xl bg-[#b3262b] px-5 text-lg font-bold text-white"
+                        >
+                          Apagar
+                        </button>
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      </div>
+    </main>
+  );
 }
