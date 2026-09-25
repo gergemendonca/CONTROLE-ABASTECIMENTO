@@ -200,7 +200,7 @@ export default function AdminClient() {
           </button>
           <button
             type="button"
-            onClick={() => window.location.assign("/autorizacoes")}
+            onClick={() => window.location.assign("/pedidos?status=pending")}
             className="min-h-20 rounded-xl bg-[#b3262b] px-3 py-3 text-xl font-extrabold leading-tight text-white sm:text-2xl"
           >
             ⛽ AUTORIZAR
