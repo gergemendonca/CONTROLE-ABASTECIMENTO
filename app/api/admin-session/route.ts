@@ -1,3 +1,4 @@
-import {adminCookie,createAdminSession,verifyAdminPassword} from '../admin-auth';
-export async function POST(req:Request){const {password}=await req.json() as {password?:string};if(!await verifyAdminPassword(password))return Response.json({error:'Senha incorreta.'},{status:401});return new Response(JSON.stringify({ok:true}),{headers:{'Content-Type':'application/json','Set-Cookie':adminCookie(await createAdminSession())}})}
-export async function DELETE(){return new Response(null,{status:204,headers:{'Set-Cookie':'admin_access=; Path=/; HttpOnly; Max-Age=0'}})}
+import {clearSessionCookie,createSession,getSession,login,sessionCookie} from '../admin-auth';
+export async function GET(req:Request){return Response.json({user:await getSession(req)});}
+export async function POST(req:Request){const {username,password}=await req.json() as {username?:string;password?:string};if(typeof username!=='string'||typeof password!=='string')return Response.json({error:'Informe usuário e senha.'},{status:400});const user=await login(username,password);if(!user)return Response.json({error:'Usuário ou senha incorretos.'},{status:401});return new Response(JSON.stringify({ok:true,user}),{headers:{'Content-Type':'application/json','Set-Cookie':sessionCookie(await createSession(user))}})}
+export async function DELETE(){return new Response(null,{status:204,headers:{'Set-Cookie':clearSessionCookie()}})}

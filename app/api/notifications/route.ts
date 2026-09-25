@@ -1,0 +1,4 @@
+import {env} from 'cloudflare:workers';
+import {getSession} from '../admin-auth';
+export async function GET(req:Request){const user=await getSession(req);if(!user||user.bootstrap)return Response.json({notifications:[]});const items=await env.DB!.prepare('SELECT id,title,message,href,read_at AS readAt,created_at AS createdAt FROM app_notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 50').bind(user.id).all();return Response.json({notifications:items.results});}
+export async function PUT(req:Request){const user=await getSession(req);if(!user||user.bootstrap)return Response.json({error:'Faça login.'},{status:403});const {id}=await req.json() as {id:number};await env.DB!.prepare('UPDATE app_notifications SET read_at=? WHERE id=? AND user_id=?').bind(new Date().toISOString(),id,user.id).run();return Response.json({ok:true});}

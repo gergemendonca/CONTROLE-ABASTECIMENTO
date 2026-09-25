@@ -39,3 +39,42 @@ export const whatsappContacts=sqliteTable('whatsapp_contacts',{
  name:text('name').notNull(),
  phone:text('phone').notNull().unique(),
 });
+
+export const appUsers=sqliteTable('app_users',{
+ id:integer('id').primaryKey({autoIncrement:true}),
+ name:text('name').notNull(),
+ username:text('username').notNull().unique(),
+ passwordHash:text('password_hash').notNull(),
+ roles:text('roles').notNull(),
+ active:integer('active').notNull().default(1),
+ createdAt:text('created_at').notNull(),
+});
+
+export const tripUsers=sqliteTable('trip_users',{
+ tripId:integer('trip_id').notNull().references(()=>trips.id,{onDelete:'cascade'}),
+ userId:integer('user_id').notNull().references(()=>appUsers.id,{onDelete:'cascade'}),
+});
+
+export const fuelRequests=sqliteTable('fuel_requests',{
+ id:integer('id').primaryKey({autoIncrement:true}),
+ tripId:integer('trip_id').notNull().references(()=>trips.id),
+ requestedBy:integer('requested_by').references(()=>appUsers.id),
+ liters:real('liters').notNull(),
+ routeKm:integer('route_km').notNull(),
+ paymentStatus:text('payment_status').notNull(),
+ outstandingCents:integer('outstanding_cents').notNull().default(0),
+ status:text('status').notNull().default('pending'),
+ createdAt:text('created_at').notNull(),
+ authorizedBy:integer('authorized_by').references(()=>appUsers.id),
+ authorizedAt:text('authorized_at'),
+});
+
+export const appNotifications=sqliteTable('app_notifications',{
+ id:integer('id').primaryKey({autoIncrement:true}),
+ userId:integer('user_id').notNull().references(()=>appUsers.id,{onDelete:'cascade'}),
+ title:text('title').notNull(),
+ message:text('message').notNull(),
+ href:text('href').notNull(),
+ readAt:text('read_at'),
+ createdAt:text('created_at').notNull(),
+});

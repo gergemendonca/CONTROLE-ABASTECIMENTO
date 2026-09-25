@@ -1,12 +1,22 @@
 import { env } from 'cloudflare:workers';
 
 const encoder=new TextEncoder();
+export const roles=['admin','solicitante','autorizador','avisado'] as const;
+export type Role=typeof roles[number];
+export type SessionUser={id:number;name:string;username:string;roles:Role[];bootstrap?:boolean};
 const decode=(value:string)=>Uint8Array.from(atob(value.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
 const encode=(value:Uint8Array)=>btoa(String.fromCharCode(...value)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const equal=(a:string,b:string)=>{if(a.length!==b.length)return false;let result=0;for(let i=0;i<a.length;i++)result|=a.charCodeAt(i)^b.charCodeAt(i);return result===0};
 const cookie=(req:Request,name:string)=>req.headers.get('cookie')?.split(';').map(v=>v.trim()).find(v=>v.startsWith(name+'='))?.slice(name.length+1)||null;
 async function signature(value:string){const secret=env.ADMIN_SESSION_SECRET;if(!secret)throw Error('ADMIN_SESSION_SECRET não configurado.');const key=await crypto.subtle.importKey('raw',encoder.encode(secret),{name:'HMAC',hash:'SHA-256'},false,['sign']);return encode(new Uint8Array(await crypto.subtle.sign('HMAC',key,encoder.encode(value))));}
-export async function verifyAdminPassword(value:unknown){const password=env.ADMIN_PASSWORD;if(!password||typeof value!=='string')return false;return equal(value,password)}
-export async function createAdminSession(){const payload=encode(encoder.encode(JSON.stringify({exp:Math.floor(Date.now()/1000)+28800})));return payload+'.'+await signature(payload)}
-export async function isAdmin(req:Request){try{const token=cookie(req,'admin_access');if(!token)return false;const [payload,provided]=token.split('.');if(!payload||!provided||!equal(provided,await signature(payload)))return false;const data=JSON.parse(new TextDecoder().decode(decode(payload))) as {exp?:number};return typeof data.exp==='number'&&data.exp>Math.floor(Date.now()/1000)}catch{return false}}
-export function adminCookie(token:string){return `admin_access=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=28800`}
+function normalizeRoles(value:string):Role[]{try{const parsed=JSON.parse(value);return Array.isArray(parsed)?parsed.filter((r):r is Role=>roles.includes(r)):[]}catch{return []}}
+function allRoles():Role[]{return ['admin','solicitante','autorizador','avisado']}
+export async function hashPassword(value:string){const bytes=crypto.getRandomValues(new Uint8Array(16));const salt=encode(bytes);const key=await crypto.subtle.importKey('raw',encoder.encode(value),'PBKDF2',false,['deriveBits']);const bits=await crypto.subtle.deriveBits({name:'PBKDF2',salt:bytes,iterations:120000,hash:'SHA-256'},key,256);return `v1.${salt}.${encode(new Uint8Array(bits))}`}
+export async function verifyPassword(value:string,stored:string){const [version,salt,hash]=stored.split('.');if(version!=='v1'||!salt||!hash)return false;const bytes=decode(salt);const key=await crypto.subtle.importKey('raw',encoder.encode(value),'PBKDF2',false,['deriveBits']);const bits=await crypto.subtle.deriveBits({name:'PBKDF2',salt:bytes,iterations:120000,hash:'SHA-256'},key,256);return equal(encode(new Uint8Array(bits)),hash)}
+export async function login(username:string,password:string):Promise<SessionUser|null>{const clean=username.trim().toLowerCase();if(clean==='admin'&&env.ADMIN_PASSWORD&&equal(password,env.ADMIN_PASSWORD))return {id:0,name:'Administrador',username:'admin',roles:allRoles(),bootstrap:true};const user=await env.DB!.prepare('SELECT id,name,username,password_hash AS passwordHash,roles FROM app_users WHERE lower(username)=? AND active=1 LIMIT 1').bind(clean).first<{id:number;name:string;username:string;passwordHash:string;roles:string}>();if(!user||!await verifyPassword(password,user.passwordHash))return null;return {id:user.id,name:user.name,username:user.username,roles:normalizeRoles(user.roles)};}
+export async function createSession(user:SessionUser){const payload=encode(encoder.encode(JSON.stringify({u:user,exp:Math.floor(Date.now()/1000)+60*60*24*180})));return payload+'.'+await signature(payload)}
+export async function getSession(req:Request):Promise<SessionUser|null>{try{const token=cookie(req,'app_access');if(!token)return null;const [payload,provided]=token.split('.');if(!payload||!provided||!equal(provided,await signature(payload)))return null;const data=JSON.parse(new TextDecoder().decode(decode(payload))) as {u?:SessionUser;exp?:number};if(typeof data.exp!=='number'||data.exp<=Math.floor(Date.now()/1000)||!data.u||!Array.isArray(data.u.roles))return null;return data.u}catch{return null}}
+export async function isAdmin(req:Request){const user=await getSession(req);return !!user&&user.roles.includes('admin')}
+export async function requireRole(req:Request,...allowed:Role[]){const user=await getSession(req);if(!user)return {user:null,error:'Faça login para continuar.'};if(user.roles.includes('admin')||allowed.some(r=>user.roles.includes(r)))return {user};return {user:null,error:'Seu usuário não tem permissão para esta ação.'}}
+export function sessionCookie(token:string){return `app_access=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${60*60*24*180}`}
+export function clearSessionCookie(){return 'app_access=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0'}
