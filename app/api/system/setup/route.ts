@@ -9,4 +9,4 @@ export async function POST(req:Request){if(!await isAdmin(req))return Response.j
  env.DB!.prepare('CREATE INDEX IF NOT EXISTS fuel_requests_status_idx ON fuel_requests (status)'),
  env.DB!.prepare('CREATE TABLE IF NOT EXISTS app_notifications (id integer PRIMARY KEY AUTOINCREMENT NOT NULL,user_id integer NOT NULL,title text NOT NULL,message text NOT NULL,href text NOT NULL,read_at text,created_at text NOT NULL,FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE)'),
  env.DB!.prepare('CREATE INDEX IF NOT EXISTS app_notifications_user_idx ON app_notifications (user_id,read_at)')
-]);return Response.json({ok:true});}catch{return Response.json({error:'Não foi possível preparar a atualização do banco.'},{status:503})}}
+]);const columns=await env.DB!.prepare('PRAGMA table_info(app_users)').all<{name:string}>();if(!columns.results.some(column=>column.name==='group_name'))await env.DB!.prepare("ALTER TABLE app_users ADD COLUMN group_name text DEFAULT 'motorista' NOT NULL").run();return Response.json({ok:true});}catch{return Response.json({error:'Não foi possível preparar a atualização do banco.'},{status:503})}}

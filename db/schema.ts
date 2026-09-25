@@ -45,6 +45,7 @@ export const appUsers=sqliteTable('app_users',{
  name:text('name').notNull(),
  username:text('username').notNull().unique(),
  passwordHash:text('password_hash').notNull(),
+ groupName:text('group_name').notNull().default('motorista'),
  roles:text('roles').notNull(),
  active:integer('active').notNull().default(1),
  createdAt:text('created_at').notNull(),
