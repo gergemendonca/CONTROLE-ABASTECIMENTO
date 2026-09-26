@@ -176,39 +176,10 @@ export default function AdminClient() {
     setConfirmId(null);
     setMsg("Viagem apagada e removida da lista.");
   }
-  async function leaveAdmin() {
-    await fetch("/api/admin-session", { method: "DELETE" });
-    window.location.assign("/");
-  }
-  const actions = [
-    { label: "Nova viagem", icon: "🚚", color: "bg-[#1677d8] text-white", action: () => formSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }) },
-    { label: "Solicitar abastecimento", icon: "⛽", color: "bg-[#0b7184] text-white", action: () => window.location.assign("/solicitar-abastecimento") },
-    { label: "AUTORIZAR", icon: "✓", color: "bg-[#c9272c] text-white", action: () => window.location.assign("/pedidos?status=pending"), prominent: true },
-    { label: "Pendências", icon: "!", color: "bg-[#f5b51b] text-[#2c2509]", action: () => window.location.assign("/pedidos?status=pending") },
-    { label: "Autorizados", icon: "✓", color: "bg-[#188145] text-white", action: () => window.location.assign("/pedidos?status=authorized") },
-    { label: "Abastecimentos feitos", icon: "▤", color: "bg-[#0f8f8e] text-white", action: () => window.location.assign("/admin/abastecimentos-feitos") },
-    { label: "Usuários", icon: "♟", color: "bg-[#7441c8] text-white", action: () => window.location.assign("/admin/configuracoes") },
-    { label: "Configurações", icon: "⚙", color: "bg-[#46515d] text-white", action: () => window.location.assign("/admin/configuracoes") },
-  ];
   return (
     <main className="min-h-screen bg-[#f3f6f9] p-5">
       <div className="mx-auto max-w-xl">
-        <header className="mb-5 flex items-center gap-3">
-          <img src="/icon.png" alt="SD Tour Abastecimento" className="h-16 w-16 rounded-2xl shadow" />
-          <div><p className="text-sm font-bold uppercase tracking-[.12em] text-[#b3262b]">SD Tour</p><h1 className="text-3xl font-extrabold text-slate-900">Área Adm</h1></div>
-        </header>
-        <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {actions.map((item) => <button key={item.label} type="button" onClick={item.action} className={`flex min-h-32 flex-col items-center justify-center rounded-2xl px-3 py-4 text-center shadow-sm transition active:scale-[.98] ${item.color} ${item.prominent ? "ring-4 ring-red-100" : ""}`}><span className="mb-2 grid h-10 w-10 place-items-center rounded-full bg-white/20 text-2xl font-extrabold">{item.icon}</span><span className={`text-base font-extrabold leading-tight ${item.prominent ? "text-lg" : ""}`}>{item.label}</span></button>)}
-        </div>
-        <div className="mb-6 grid grid-cols-1 gap-3">
-          <button
-            type="button"
-            onClick={() => void leaveAdmin()}
-            className="h-14 rounded-xl border-2 border-slate-500 bg-white px-3 text-base font-bold text-slate-700 sm:text-lg"
-          >
-            Sair para a página inicial
-          </button>
-        </div>
+        <button type="button" onClick={() => window.location.assign("/admin")} className="mb-5 h-14 w-full rounded-xl border-2 border-slate-500 bg-white px-3 text-lg font-bold text-slate-700">Voltar para Área Adm</button>
         <section
           ref={formSectionRef}
           className="rounded-3xl bg-white p-7 shadow"
