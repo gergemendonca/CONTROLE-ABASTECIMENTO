@@ -18,6 +18,7 @@ type AppUser = {
   groupName: "motorista" | "adm" | "gerencia";
 };
 type Confirmation = { messages: string[]; hasConflict: boolean };
+type LiveConflict = { kind: "vehicle" | "drivers" | "duplicate"; key: string; message: string; driverIds?: number[] };
 const formatDate = (date: string) => date.split("-").reverse().join("/");
 
 export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }) {
@@ -35,6 +36,8 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     [editing, setEditing] = useState<number | null>(null),
     [confirmId, setConfirmId] = useState<number | null>(null),
     [confirmation, setConfirmation] = useState<Confirmation | null>(null),
+    [liveConflict, setLiveConflict] = useState<LiveConflict | null>(null),
+    [acceptedConflicts, setAcceptedConflicts] = useState<string[]>([]),
     [msg, setMsg] = useState("");
   async function load() {
     const [carsResponse, tripsResponse, usersResponse] = await Promise.all([
@@ -73,6 +76,8 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     setEditing(null);
     setConfirmId(null);
     setConfirmation(null);
+    setLiveConflict(null);
+    setAcceptedConflicts([]);
   }
   function overlapping(trip: Trip) {
     return (
@@ -81,6 +86,30 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
       trip.arrivalDate >= departureDate
     );
   }
+  const vehicleConflictKey = `vehicle:${car}:${departureDate}:${arrivalDate}`;
+  const driversConflictKey = `drivers:${[...selectedDriverIds].sort((a, b) => a - b).join(",")}:${departureDate}:${arrivalDate}`;
+  function currentConflicts() {
+    const currentTrips = trips.filter(overlapping);
+    const vehicleBusy = currentTrips.some((trip) => trip.vehicleId === Number(car));
+    const exactDuplicate = currentTrips.some((trip) => trip.vehicleId === Number(car) && trip.departureDate === departureDate && trip.arrivalDate === arrivalDate);
+    const busyDriverIds = selectedDriverIds.filter((id) => currentTrips.some((trip) => trip.userIds.includes(id)));
+    return { currentTrips, vehicleBusy, exactDuplicate, busyDriverIds };
+  }
+  useEffect(() => {
+    if (!car || !departureDate || !arrivalDate || arrivalDate < departureDate || liveConflict) return;
+    const { vehicleBusy, exactDuplicate, busyDriverIds } = currentConflicts();
+    if (exactDuplicate) {
+      setLiveConflict({ kind: "duplicate", key: vehicleConflictKey, message: "Este carro já possui uma viagem cadastrada exatamente neste mesmo período. Escolha outro carro ou altere as datas." });
+      return;
+    }
+    if (vehicleBusy && !acceptedConflicts.includes(vehicleConflictKey)) {
+      setLiveConflict({ kind: "vehicle", key: vehicleConflictKey, message: "Já existe uma viagem para este carro no período informado. Há compatibilidade de horário?" });
+      return;
+    }
+    if (busyDriverIds.length && !acceptedConflicts.includes(driversConflictKey)) {
+      setLiveConflict({ kind: "drivers", key: driversConflictKey, driverIds: busyDriverIds, message: `Já existe viagem no período informado para: ${busyDriverIds.map(driverName).filter(Boolean).join(", ")}. Há compatibilidade de horário?` });
+    }
+  }, [car, departureDate, arrivalDate, selectedDriverIds, trips, editing, acceptedConflicts, liveConflict]);
   function askBeforeSaving(event: React.FormEvent) {
     event.preventDefault();
     const messages: string[] = [];
@@ -88,16 +117,16 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
       messages.push(
         `Você selecionou apenas ${driverName(selectedDriverIds[0])}. Confirma que será o único motorista desta viagem?`,
       );
-    const currentTrips = trips.filter(overlapping);
-    if (currentTrips.some((trip) => trip.vehicleId === Number(car)))
+    const { vehicleBusy, exactDuplicate, busyDriverIds } = currentConflicts();
+    if (exactDuplicate) return setMsg("Já existe uma viagem cadastrada para este carro exatamente neste mesmo período. Escolha outro carro ou altere as datas.");
+    if (vehicleBusy && !acceptedConflicts.includes(vehicleConflictKey))
       messages.push(
         "Já existe uma viagem para este carro no mesmo período. Há compatibilidade de horário?",
       );
-    const busyDrivers = selectedDriverIds
-      .filter((id) => currentTrips.some((trip) => trip.userIds.includes(id)))
+    const busyDrivers = busyDriverIds
       .map(driverName)
       .filter(Boolean);
-    if (busyDrivers.length)
+    if (busyDrivers.length && !acceptedConflicts.includes(driversConflictKey))
       messages.push(
         `Já existe viagem no mesmo período para: ${busyDrivers.join(", ")}. Há compatibilidade de horário?`,
       );
@@ -105,12 +134,12 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
       setConfirmation({
         messages,
         hasConflict:
-          currentTrips.some((trip) => trip.vehicleId === Number(car)) ||
+          vehicleBusy ||
           busyDrivers.length > 0,
       });
       return;
     }
-    void persist(false);
+    void persist(vehicleBusy || busyDrivers.length > 0);
   }
   async function persist(allowConflicts: boolean) {
     const wasEditing = editing !== null,
@@ -364,6 +393,15 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                   Não, cancelar
                 </button>
               </div>
+            </section>
+          </div>
+        )}
+        {liveConflict && (
+          <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-5">
+            <section role="dialog" aria-modal="true" className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
+              <h2 className="text-2xl font-bold text-[#b3262b]">Conflito de viagem</h2>
+              <p className="mt-4 rounded-xl bg-amber-50 p-4 text-lg">{liveConflict.message}</p>
+              {liveConflict.kind === "duplicate" ? <button type="button" onClick={() => { setLiveConflict(null); setCar(""); setMsg("Selecione outro carro ou altere as datas da viagem."); }} className="mt-6 min-h-14 w-full rounded-xl bg-[#1677d8] px-4 py-2 text-lg font-bold text-white">Entendi, alterar cadastro</button> : <div className="mt-6 grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => { setAcceptedConflicts((items) => [...items, liveConflict.key]); setLiveConflict(null); setMsg("Compatibilidade de horário confirmada. Você pode continuar o cadastro."); }} className="min-h-14 rounded-xl bg-[#178045] px-4 py-2 text-lg font-bold text-white">Sim, há compatibilidade</button><button type="button" onClick={() => { const conflict = liveConflict; setLiveConflict(null); if (conflict.kind === "vehicle") setCar(""); else setSelectedDriverIds((ids) => ids.filter((id) => !conflict.driverIds?.includes(id))); setMsg(conflict.kind === "vehicle" ? "Selecione outro carro ou altere as datas." : "Selecione outro motorista."); }} className="min-h-14 rounded-xl border-2 border-[#b3262b] px-4 py-2 text-lg font-bold text-[#b3262b]">Não, alterar seleção</button></div>}
             </section>
           </div>
         )}
