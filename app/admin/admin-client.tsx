@@ -224,7 +224,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
   return (
     <main className="min-h-screen bg-[#f3f6f9] p-5">
       <div className="mx-auto max-w-xl">
-        <button type="button" onClick={() => window.location.assign("/admin")} className="mb-5 h-14 w-full rounded-xl border-2 border-slate-500 bg-white px-3 text-lg font-bold text-slate-700">Voltar para Área Adm</button>
+        <div className="mb-5 grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => window.location.assign("/admin")} className="h-14 rounded-xl border-2 border-slate-500 bg-white px-3 text-lg font-bold text-slate-700">Voltar para Área Adm</button>{mode !== "list"&&<button type="button" onClick={() => window.location.assign("/admin/viagens")} className="h-14 rounded-xl border-2 border-[#1677d8] bg-white px-3 text-lg font-bold text-[#1677d8]">Viagens lançadas</button>}</div>
         {mode !== "list" && <>
         <section
           ref={formSectionRef}

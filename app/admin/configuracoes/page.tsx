@@ -113,7 +113,7 @@ export default function Configuracoes() {
       <div className="mx-auto max-w-xl">
         <button
           type="button"
-          onClick={() => history.back()}
+          onClick={() => window.location.assign('/admin')}
           className="mb-5 min-h-12 rounded-xl border px-5 py-2 text-lg font-bold"
         >
           Voltar para Adm
