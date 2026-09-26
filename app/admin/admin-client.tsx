@@ -20,7 +20,7 @@ type AppUser = {
 type Confirmation = { messages: string[]; hasConflict: boolean };
 const formatDate = (date: string) => date.split("-").reverse().join("/");
 
-export default function AdminClient() {
+export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }) {
   const today = new Date().toISOString().slice(0, 10),
     formSectionRef = useRef<HTMLElement>(null);
   const [cars, setCars] = useState<any[]>([]),
@@ -180,6 +180,7 @@ export default function AdminClient() {
     <main className="min-h-screen bg-[#f3f6f9] p-5">
       <div className="mx-auto max-w-xl">
         <button type="button" onClick={() => window.location.assign("/admin")} className="mb-5 h-14 w-full rounded-xl border-2 border-slate-500 bg-white px-3 text-lg font-bold text-slate-700">Voltar para Área Adm</button>
+        {mode !== "list" && <>
         <section
           ref={formSectionRef}
           className="rounded-3xl bg-white p-7 shadow"
@@ -318,6 +319,7 @@ export default function AdminClient() {
             </p>
           )}
         </section>
+        </>}
         {confirmation && (
           <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-5">
             <section
@@ -365,11 +367,8 @@ export default function AdminClient() {
             </section>
           </div>
         )}
-        <section className="mt-7">
-          <h2 className="mb-2 text-2xl font-bold">Viagens lançadas e salvas</h2>
-          <p className="mb-4 text-base text-slate-600">
-            A mais recentemente cadastrada aparece no topo.
-          </p>
+        {mode !== "new" && <section className="mt-7">
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-2xl font-bold">Viagens cadastradas</h2><p className="mt-1 text-base text-slate-600">A mais recentemente cadastrada aparece no topo.</p></div><button type="button" onClick={() => window.location.assign("/admin/viagens/nova")} className="h-12 rounded-xl bg-[#1677d8] px-5 text-lg font-bold text-white">+ Incluir nova viagem</button></div>
           {trips.length === 0 ? (
             <p className="rounded-2xl bg-white p-5 text-lg">
               Nenhuma viagem salva.
@@ -447,7 +446,7 @@ export default function AdminClient() {
               })}
             </div>
           )}
-        </section>
+        </section>}
       </div>
     </main>
   );
