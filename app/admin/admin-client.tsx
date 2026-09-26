@@ -10,6 +10,7 @@ type Trip = {
   arrivalDate: string;
   route: string;
   totalKm: number;
+  totalValueCents: number;
   userIds: number[];
 };
 type AppUser = {
@@ -32,6 +33,8 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     [arrivalDate, setArrivalDate] = useState(today),
     [route, setRoute] = useState(""),
     [totalKm, setTotalKm] = useState(""),
+    [totalValue, setTotalValue] = useState(""),
+    [datesConfirmed, setDatesConfirmed] = useState(false),
     [selectedDriverIds, setSelectedDriverIds] = useState<number[]>([]),
     [editing, setEditing] = useState<number | null>(null),
     [confirmId, setConfirmId] = useState<number | null>(null),
@@ -72,6 +75,8 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     setArrivalDate(today);
     setRoute("");
     setTotalKm("");
+    setTotalValue("");
+    setDatesConfirmed(false);
     setSelectedDriverIds([]);
     setEditing(null);
     setConfirmId(null);
@@ -95,9 +100,9 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     const busyDriverIds = selectedDriverIds.filter((id) => currentTrips.some((trip) => trip.userIds.includes(id)));
     return { currentTrips, vehicleBusy, exactDuplicate, busyDriverIds };
   }
-  useEffect(() => {
-    if (!car || !departureDate || !arrivalDate || arrivalDate < departureDate || liveConflict) return;
-    const { vehicleBusy, exactDuplicate, busyDriverIds } = currentConflicts();
+  function checkVehicleConflict() {
+    if (!car || !departureDate || !arrivalDate || arrivalDate < departureDate) return;
+    const { vehicleBusy, exactDuplicate } = currentConflicts();
     if (exactDuplicate) {
       setLiveConflict({ kind: "duplicate", key: vehicleConflictKey, message: "Este carro já possui uma viagem cadastrada exatamente neste mesmo período. Escolha outro carro ou altere as datas." });
       return;
@@ -106,12 +111,24 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
       setLiveConflict({ kind: "vehicle", key: vehicleConflictKey, message: "Já existe uma viagem para este carro no período informado. Há compatibilidade de horário?" });
       return;
     }
-    if (busyDriverIds.length && !acceptedConflicts.includes(driversConflictKey)) {
-      setLiveConflict({ kind: "drivers", key: driversConflictKey, driverIds: busyDriverIds, message: `Já existe viagem no período informado para: ${busyDriverIds.map(driverName).filter(Boolean).join(", ")}. Há compatibilidade de horário?` });
+  }
+  function confirmDates() {
+    if (!car || !departureDate || !arrivalDate || arrivalDate < departureDate) {
+      setMsg("Selecione o veículo e informe corretamente a saída e a chegada antes de confirmar as datas.");
+      return;
     }
-  }, [car, departureDate, arrivalDate, selectedDriverIds, trips, editing, acceptedConflicts, liveConflict]);
+    setDatesConfirmed(true);
+    checkVehicleConflict();
+    if (!liveConflict) setMsg("Carro e datas confirmados. Agora informe os demais dados da viagem.");
+  }
+  useEffect(() => {
+    if (!datesConfirmed || !selectedDriverIds.length || liveConflict) return;
+    const { busyDriverIds } = currentConflicts();
+    if (busyDriverIds.length && !acceptedConflicts.includes(driversConflictKey)) setLiveConflict({ kind: "drivers", key: driversConflictKey, driverIds: busyDriverIds, message: `Já existe viagem no período informado para: ${busyDriverIds.map(driverName).filter(Boolean).join(", ")}. Há compatibilidade de horário?` });
+  }, [datesConfirmed, selectedDriverIds, trips, editing, acceptedConflicts, liveConflict, car, departureDate, arrivalDate]);
   function askBeforeSaving(event: React.FormEvent) {
     event.preventDefault();
+    if (!datesConfirmed) return setMsg("Confirme carro e datas antes de salvar a viagem.");
     const messages: string[] = [];
     if (editing === null && selectedDriverIds.length === 1)
       messages.push(
@@ -152,6 +169,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
           arrivalDate,
           route,
           totalKm: Number(totalKm),
+          totalValueCents: Math.round(Number(String(totalValue).replace(",", ".")) * 100),
           associatedUserIds: selectedDriverIds,
           allowConflicts,
         }),
@@ -165,18 +183,14 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     await load();
     if (wasEditing) {
       setMsg("Viagem atualizada com sucesso.");
+      window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
     clear();
     setMsg(
       "Viagem salva com sucesso. O formulário foi limpo para iniciar outro cadastro.",
     );
-    requestAnimationFrame(() =>
-      formSectionRef.current?.scrollIntoView({
-        behavior: "smooth",
-        block: "center",
-      }),
-    );
+    requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
   }
   function edit(trip: Trip) {
     setEditing(trip.id);
@@ -185,6 +199,8 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     setArrivalDate(trip.arrivalDate);
     setRoute(trip.route);
     setTotalKm(String(trip.totalKm || ""));
+    setTotalValue(((trip.totalValueCents || 0) / 100).toFixed(2).replace(".", ","));
+    setDatesConfirmed(true);
     setSelectedDriverIds(
       trip.userIds.filter((id) => drivers.some((driver) => driver.id === id)),
     );
@@ -223,7 +239,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
               Veículo
               <select
                 value={car}
-                onChange={(event) => setCar(event.target.value)}
+                onChange={(event) => { setCar(event.target.value); setDatesConfirmed(false); setAcceptedConflicts([]); }}
                 required
                 className="mt-2 h-16 w-full rounded-xl border p-3 text-2xl"
               >
@@ -243,6 +259,8 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                   value={departureDate}
                   onChange={(event) => {
                     setDepartureDate(event.target.value);
+                    setDatesConfirmed(false);
+                    setAcceptedConflicts([]);
                     if (arrivalDate < event.target.value)
                       setArrivalDate(event.target.value);
                   }}
@@ -255,11 +273,14 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                   type="date"
                   min={departureDate}
                   value={arrivalDate}
-                  onChange={(event) => setArrivalDate(event.target.value)}
+                  onChange={(event) => { setArrivalDate(event.target.value); setDatesConfirmed(false); setAcceptedConflicts([]); }}
                   className="mt-2 h-16 min-w-0 w-full rounded-xl border p-3 text-lg"
                 />
               </label>
             </div>
+            <button type="button" onClick={confirmDates} className="min-h-12 w-full rounded-xl border-2 border-[#1677d8] bg-[#eaf4ff] px-4 py-2 text-lg font-bold text-[#075a9f]">
+              {datesConfirmed ? "Carro e datas confirmados — conferir novamente" : "Confirmar carro e datas"}
+            </button>
             <label className="block text-lg font-bold">
               Quilometragem total da viagem
               <input
@@ -270,6 +291,20 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                 value={totalKm}
                 onChange={(event) => setTotalKm(event.target.value)}
                 placeholder="Ex.: 320"
+                className="mt-2 h-16 w-full rounded-xl border p-3 text-2xl"
+              />
+            </label>
+            <label className="block text-lg font-bold">
+              Valor total da viagem (R$)
+              <input
+                required
+                min="0.01"
+                inputMode="decimal"
+                type="number"
+                step="0.01"
+                value={totalValue}
+                onChange={(event) => setTotalValue(event.target.value)}
+                placeholder="Ex.: 1.250,00"
                 className="mt-2 h-16 w-full rounded-xl border p-3 text-2xl"
               />
             </label>
@@ -432,6 +467,10 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                     <p className="mt-2 text-lg">
                       <strong>Quilometragem total:</strong>{" "}
                       {Number(trip.totalKm || 0).toLocaleString("pt-BR")} km
+                    </p>
+                    <p className="mt-2 text-lg">
+                      <strong>Valor total da viagem:</strong>{" "}
+                      {new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format((trip.totalValueCents || 0) / 100)}
                     </p>
                     <p className="mt-2 text-lg">
                       <strong>Motorista{names.length === 1 ? "" : "s"}:</strong>{" "}

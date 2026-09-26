@@ -91,6 +91,7 @@ export default function Configuracoes() {
         ? "Usuário, grupo e permissões atualizados."
         : "Usuário cadastrado.",
     );
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
   async function removeUser(user: User) {
     const response = await fetch(`/api/users/${user.id}`, { method: "DELETE" }),
