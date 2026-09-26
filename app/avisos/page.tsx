@@ -13,7 +13,7 @@ export default function Avisos(){
  useEffect(()=>{void Promise.all([fetch('/api/notifications',{cache:'no-store'}).then(r=>r.json()),fetch('/api/fuel-requests',{cache:'no-store'}).then(r=>r.json())]).then(([notices,requests])=>{
    const byId=new Map<number,Request>((requests.requests||[]).map((request:Request)=>[request.id,request]));
    const latest=new Map<string,Item>();
-   for(const notice of notices.notifications||[]){const id=requestId(notice.href);const request=byId.get(id);if(request&&request.departureDate<=today())continue;const key=request?`request:${request.id}`:`notice:${notice.id}`;if(!latest.has(key))latest.set(key,{notice,request});}
+   for(const notice of notices.notifications||[]){const id=requestId(notice.href);const request=byId.get(id);if(Number.isInteger(id)&&id>0&&!request)continue;if(request&&request.departureDate<=today())continue;const key=request?`request:${request.id}`:`notice:${notice.id}`;if(!latest.has(key))latest.set(key,{notice,request});}
    setItems([...latest.values()]);setMessage('');
  }).catch(()=>setMessage('Não foi possível carregar os avisos.'))},[]);
  async function open(item:Item){await fetch('/api/notifications',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:item.notice.id})});window.location.assign(item.notice.href)}
