@@ -13,7 +13,7 @@ async function ensureLaunchAudit(){
   if(!columns.results.some(column=>column.name==='launched_by_name'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN launched_by_name text').run();
 }
 
-function canChooseDriver(user:SessionUser){return !!user.bootstrap||user.groupName==='adm'||user.groupName==='gerencia'||user.roles.includes('admin');}
+function canChooseDriver(user:SessionUser){return !!user.bootstrap||user.groupName==='adm'||user.groupName==='gerencia';}
 
 async function canLaunchFor(user:SessionUser,driverId:number){
   if(canChooseDriver(user))return true;
@@ -44,6 +44,8 @@ export async function POST(req:Request){
     const data=await validate(await req.json());
     if(!data)return Response.json({error:'Escolha uma viagem cadastrada e confira veículo, motorista, KM, itens, quantidades e valores.'},{status:400});
     if(!await canLaunchFor(session,data.driverId))return Response.json({error:'Você só pode lançar abastecimento em seu próprio nome.'},{status:403});
+    const last=await env.DB!.prepare('SELECT MAX(odometer) AS odometer FROM fueling WHERE vehicle_id=?').bind(data.vehicleId).first<{odometer:number|null}>();
+    if(last?.odometer!==null&&last?.odometer!==undefined&&data.odometer<last.odometer)return Response.json({error:`A quilometragem informada é inferior à última registrada para este carro (${last.odometer.toLocaleString('pt-BR')} km). Revise o painel do veículo.`},{status:409});
     await ensureLaunchAudit();
     const duplicate=await env.DB!.prepare('SELECT id FROM fueling WHERE vehicle_id=? AND odometer=? LIMIT 1').bind(data.vehicleId,data.odometer).first();
     if(duplicate)return Response.json({error:'Já existe um abastecimento deste veículo com esta quilometragem. Confira o KM informado.'},{status:409});

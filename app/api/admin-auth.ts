@@ -1,9 +1,9 @@
-import { env } from 'cloudflare:workers';
+import {env} from 'cloudflare:workers';
 
 const encoder=new TextEncoder();
 export const roles=['admin','solicitante','autorizador','avisado'] as const;
 export type Role=typeof roles[number];
-export type SessionUser={id:number;name:string;username:string;roles:Role[];groupName?:'motorista'|'adm'|'gerencia';bootstrap?:boolean};
+export type SessionUser={id:number;name:string;username:string;roles:Role[];groupName?:'motorista'|'adm'|'gerencia';bootstrap?:boolean;passwordChangeRequired?:boolean};
 const decode=(value:string)=>Uint8Array.from(atob(value.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
 const encode=(value:Uint8Array)=>btoa(String.fromCharCode(...value)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const equal=(a:string,b:string)=>{if(a.length!==b.length)return false;let result=0;for(let i=0;i<a.length;i++)result|=a.charCodeAt(i)^b.charCodeAt(i);return result===0};
@@ -14,10 +14,46 @@ function allRoles():Role[]{return ['admin','solicitante','autorizador','avisado'
 async function digest(value:string){return encode(new Uint8Array(await crypto.subtle.digest('SHA-256',encoder.encode(value))))}
 export async function hashPassword(value:string){const salt=encode(crypto.getRandomValues(new Uint8Array(16)));return `v2.${salt}.${await digest(`${salt}:${value}`)}`}
 export async function verifyPassword(value:string,stored:string){const [version,salt,hash]=stored.split('.');if(!salt||!hash)return false;if(version==='v2')return equal(await digest(`${salt}:${value}`),hash);if(version!=='v1')return false;const bytes=decode(salt);const key=await crypto.subtle.importKey('raw',encoder.encode(value),'PBKDF2',false,['deriveBits']);const bits=await crypto.subtle.deriveBits({name:'PBKDF2',salt:bytes,iterations:120000,hash:'SHA-256'},key,256);return equal(encode(new Uint8Array(bits)),hash)}
-export async function login(username:string,password:string):Promise<SessionUser|null>{const clean=username.trim().toLowerCase();if(clean==='admin'&&env.ADMIN_PASSWORD&&equal(password,env.ADMIN_PASSWORD))return {id:0,name:'George Mendonça',username:'admin',roles:allRoles(),groupName:'adm',bootstrap:true};const user=await env.DB!.prepare('SELECT id,name,username,password_hash AS passwordHash,roles,group_name AS groupName FROM app_users WHERE lower(username)=? AND active=1 LIMIT 1').bind(clean).first<{id:number;name:string;username:string;passwordHash:string;roles:string;groupName?:'motorista'|'adm'|'gerencia'}>();if(!user||!await verifyPassword(password,user.passwordHash))return null;return {id:user.id,name:user.name,username:user.username,roles:normalizeRoles(user.roles),groupName:user.groupName||'motorista'};}
+
+export async function ensureUserPasswordPolicy(){
+ await env.DB!.prepare('CREATE TABLE IF NOT EXISTS app_settings (key text PRIMARY KEY NOT NULL,value text NOT NULL)').run();
+ const columns=await env.DB!.prepare('PRAGMA table_info(app_users)').all<{name:string}>();
+ if(!columns.results.some(column=>column.name==='password_change_required'))await env.DB!.prepare('ALTER TABLE app_users ADD COLUMN password_change_required integer DEFAULT 0 NOT NULL').run();
+ const marker=await env.DB!.prepare("SELECT value FROM app_settings WHERE key='password_policy_v1'").first();
+ if(marker)return;
+ const defaultHash=await hashPassword('1234');
+ await env.DB!.batch([
+  env.DB!.prepare('UPDATE app_users SET password_hash=?,password_change_required=1').bind(defaultHash),
+  env.DB!.prepare("INSERT INTO app_settings (key,value) VALUES ('password_policy_v1',?)").bind(new Date().toISOString())
+ ]);
+}
+
+type UserRow={id:number;name:string;username:string;passwordHash:string;roles:string;groupName?:'motorista'|'adm'|'gerencia';passwordChangeRequired?:number};
+function asSession(user:UserRow):SessionUser{return {id:user.id,name:user.name,username:user.username,roles:normalizeRoles(user.roles),groupName:user.groupName||'motorista',passwordChangeRequired:!!user.passwordChangeRequired};}
+
+export async function login(username:string,password:string):Promise<SessionUser|null>{
+ const clean=username.trim().toLowerCase();
+ if(clean==='admin'&&env.ADMIN_PASSWORD&&equal(password,env.ADMIN_PASSWORD))return {id:0,name:'George Mendonça',username:'admin',roles:allRoles(),groupName:'adm',bootstrap:true};
+ await ensureUserPasswordPolicy();
+ const user=await env.DB!.prepare('SELECT id,name,username,password_hash AS passwordHash,roles,group_name AS groupName,password_change_required AS passwordChangeRequired FROM app_users WHERE lower(username)=? AND active=1 LIMIT 1').bind(clean).first<UserRow>();
+ if(!user||!await verifyPassword(password,user.passwordHash))return null;
+ return asSession(user);
+}
 export async function createSession(user:SessionUser){const payload=encode(encoder.encode(JSON.stringify({u:user,exp:Math.floor(Date.now()/1000)+60*60*24*180})));return payload+'.'+await signature(payload)}
-export async function getSession(req:Request):Promise<SessionUser|null>{try{const token=cookie(req,'app_access');if(!token)return null;const [payload,provided]=token.split('.');if(!payload||!provided||!equal(provided,await signature(payload)))return null;const data=JSON.parse(new TextDecoder().decode(decode(payload))) as {u?:SessionUser;exp?:number};if(typeof data.exp!=='number'||data.exp<=Math.floor(Date.now()/1000)||!data.u||!Array.isArray(data.u.roles))return null;if(data.u.bootstrap)return {...data.u,name:'George Mendonça'};const current=await env.DB!.prepare('SELECT id,name,username,roles,group_name AS groupName FROM app_users WHERE id=? AND active=1 LIMIT 1').bind(data.u.id).first<{id:number;name:string;username:string;roles:string;groupName?:'motorista'|'adm'|'gerencia'}>();if(!current)return null;return {id:current.id,name:current.name,username:current.username,roles:normalizeRoles(current.roles),groupName:current.groupName||'motorista'};}catch{return null}}
-export async function isAdmin(req:Request){const user=await getSession(req);return !!user&&user.roles.includes('admin')}
-export async function requireRole(req:Request,...allowed:Role[]){const user=await getSession(req);if(!user)return {user:null,error:'Faça login para continuar.'};if(user.roles.includes('admin')||allowed.some(r=>user.roles.includes(r)))return {user};return {user:null,error:'Seu usuário não tem permissão para esta ação.'}}
+export async function getSession(req:Request):Promise<SessionUser|null>{
+ try{
+  const token=cookie(req,'app_access');if(!token)return null;
+  const [payload,provided]=token.split('.');if(!payload||!provided||!equal(provided,await signature(payload)))return null;
+  const data=JSON.parse(new TextDecoder().decode(decode(payload))) as {u?:SessionUser;exp?:number};
+  if(typeof data.exp!=='number'||data.exp<=Math.floor(Date.now()/1000)||!data.u||!Array.isArray(data.u.roles))return null;
+  if(data.u.bootstrap)return {...data.u,name:'George Mendonça'};
+  await ensureUserPasswordPolicy();
+  const current=await env.DB!.prepare('SELECT id,name,username,roles,group_name AS groupName,password_change_required AS passwordChangeRequired FROM app_users WHERE id=? AND active=1 LIMIT 1').bind(data.u.id).first<Omit<UserRow,'passwordHash'>>();
+  if(!current)return null;
+  return {id:current.id,name:current.name,username:current.username,roles:normalizeRoles(current.roles),groupName:current.groupName||'motorista',passwordChangeRequired:!!current.passwordChangeRequired};
+ }catch{return null}
+}
+export async function isAdmin(req:Request){const user=await getSession(req);return !!user&&!user.passwordChangeRequired&&user.roles.includes('admin')}
+export async function requireRole(req:Request,...allowed:Role[]){const user=await getSession(req);if(!user)return {user:null,error:'Faça login para continuar.'};if(user.passwordChangeRequired)return {user:null,error:'Troque sua senha antes de continuar.'};if(user.roles.includes('admin')||allowed.some(role=>user.roles.includes(role)))return {user};return {user:null,error:'Seu usuário não tem permissão para esta ação.'}}
 export function sessionCookie(token:string){return `app_access=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${60*60*24*180}`}
 export function clearSessionCookie(){return 'app_access=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0'}

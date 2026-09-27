@@ -1,5 +1,5 @@
 import {env} from 'cloudflare:workers';
-import {isAdmin} from '../../admin-auth';
+import {ensureUserPasswordPolicy,isAdmin} from '../../admin-auth';
 
 export async function POST(req:Request){
  if(!await isAdmin(req))return Response.json({error:'Apenas administrador.'},{status:403});
@@ -16,6 +16,7 @@ export async function POST(req:Request){
   ]);
   const columns=await env.DB!.prepare('PRAGMA table_info(app_users)').all<{name:string}>();
   if(!columns.results.some(column=>column.name==='group_name'))await env.DB!.prepare("ALTER TABLE app_users ADD COLUMN group_name text DEFAULT 'motorista' NOT NULL").run();
+  if(!columns.results.some(column=>column.name==='password_change_required'))await env.DB!.prepare('ALTER TABLE app_users ADD COLUMN password_change_required integer DEFAULT 0 NOT NULL').run();
   const tripColumns=await env.DB!.prepare('PRAGMA table_info(trips)').all<{name:string}>();
   if(!tripColumns.results.some(column=>column.name==='total_km'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN total_km integer DEFAULT 0 NOT NULL').run();
   if(!tripColumns.results.some(column=>column.name==='total_value_cents'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN total_value_cents integer DEFAULT 0 NOT NULL').run();
@@ -28,6 +29,7 @@ export async function POST(req:Request){
   if(!requestColumns.results.some(column=>column.name==='requested_by_name'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN requested_by_name text').run();
   if(!requestColumns.results.some(column=>column.name==='authorized_by_name'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN authorized_by_name text').run();
   await env.DB!.batch([env.DB!.prepare('CREATE INDEX IF NOT EXISTS fueling_trip_idx ON fueling (trip_id)'),env.DB!.prepare('CREATE INDEX IF NOT EXISTS fueling_request_idx ON fueling (fuel_request_id)')]);
+  await ensureUserPasswordPolicy();
   return Response.json({ok:true});
  }catch{return Response.json({error:'Não foi possível preparar a atualização do banco.'},{status:503})}
 }

@@ -15,6 +15,8 @@ export const fueling = sqliteTable('fueling', {
   liters: real('liters').notNull(),
   odometer: integer('odometer').notNull(),
   amountCents: integer('amount_cents').notNull().default(0),
+  launchedBy: integer('launched_by').references(() => appUsers.id),
+  launchedByName: text('launched_by_name'),
   createdAt: text('created_at').notNull(),
 });
 export const fuelingItems=sqliteTable('fueling_items',{
@@ -32,6 +34,8 @@ export const trips=sqliteTable('trips',{
  departureDate:text('departure_date'),
  arrivalDate:text('arrival_date'),
  route:text('route').notNull(),
+ totalKm:integer('total_km').notNull().default(0),
+ totalValueCents:integer('total_value_cents').notNull().default(0),
 });
 
 export const whatsappContacts=sqliteTable('whatsapp_contacts',{
@@ -47,8 +51,9 @@ export const appUsers=sqliteTable('app_users',{
  passwordHash:text('password_hash').notNull(),
  groupName:text('group_name').notNull().default('motorista'),
  roles:text('roles').notNull(),
- active:integer('active').notNull().default(1),
- createdAt:text('created_at').notNull(),
+  active:integer('active').notNull().default(1),
+  passwordChangeRequired:integer('password_change_required').notNull().default(0),
+  createdAt:text('created_at').notNull(),
 });
 
 export const tripUsers=sqliteTable('trip_users',{
