@@ -1,0 +1,31 @@
+import {env} from 'cloudflare:workers';
+import {isAdmin} from '../../admin-auth';
+
+export async function POST(req:Request){
+ if(!await isAdmin(req))return Response.json({error:'Apenas administrador.'},{status:403});
+ try{
+  await env.DB!.batch([
+   env.DB!.prepare('CREATE TABLE IF NOT EXISTS app_users (id integer PRIMARY KEY AUTOINCREMENT NOT NULL,name text NOT NULL,username text NOT NULL,password_hash text NOT NULL,roles text NOT NULL,active integer DEFAULT 1 NOT NULL,created_at text NOT NULL)'),
+   env.DB!.prepare('CREATE UNIQUE INDEX IF NOT EXISTS app_users_username_unique ON app_users (username)'),
+   env.DB!.prepare('CREATE TABLE IF NOT EXISTS trip_users (trip_id integer NOT NULL,user_id integer NOT NULL,FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE,FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE)'),
+   env.DB!.prepare('CREATE UNIQUE INDEX IF NOT EXISTS trip_users_trip_user_unique ON trip_users (trip_id,user_id)'),
+   env.DB!.prepare("CREATE TABLE IF NOT EXISTS fuel_requests (id integer PRIMARY KEY AUTOINCREMENT NOT NULL,trip_id integer NOT NULL,requested_by integer,liters real NOT NULL,route_km integer NOT NULL,payment_status text NOT NULL,outstanding_cents integer DEFAULT 0 NOT NULL,status text DEFAULT 'pending' NOT NULL,created_at text NOT NULL,authorized_by integer,authorized_at text,FOREIGN KEY (trip_id) REFERENCES trips(id),FOREIGN KEY (requested_by) REFERENCES app_users(id),FOREIGN KEY (authorized_by) REFERENCES app_users(id))"),
+   env.DB!.prepare('CREATE INDEX IF NOT EXISTS fuel_requests_status_idx ON fuel_requests (status)'),
+   env.DB!.prepare('CREATE TABLE IF NOT EXISTS app_notifications (id integer PRIMARY KEY AUTOINCREMENT NOT NULL,user_id integer NOT NULL,title text NOT NULL,message text NOT NULL,href text NOT NULL,read_at text,created_at text NOT NULL,FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE)'),
+   env.DB!.prepare('CREATE INDEX IF NOT EXISTS app_notifications_user_idx ON app_notifications (user_id,read_at)')
+  ]);
+  const columns=await env.DB!.prepare('PRAGMA table_info(app_users)').all<{name:string}>();
+  if(!columns.results.some(column=>column.name==='group_name'))await env.DB!.prepare("ALTER TABLE app_users ADD COLUMN group_name text DEFAULT 'motorista' NOT NULL").run();
+  const tripColumns=await env.DB!.prepare('PRAGMA table_info(trips)').all<{name:string}>();
+  if(!tripColumns.results.some(column=>column.name==='total_km'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN total_km integer DEFAULT 0 NOT NULL').run();
+  if(!tripColumns.results.some(column=>column.name==='total_value_cents'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN total_value_cents integer DEFAULT 0 NOT NULL').run();
+  const fuelingColumns=await env.DB!.prepare('PRAGMA table_info(fueling)').all<{name:string}>();
+  if(!fuelingColumns.results.some(column=>column.name==='trip_id'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN trip_id integer').run();
+  if(!fuelingColumns.results.some(column=>column.name==='fuel_request_id'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN fuel_request_id integer').run();
+  const requestColumns=await env.DB!.prepare('PRAGMA table_info(fuel_requests)').all<{name:string}>();
+  if(!requestColumns.results.some(column=>column.name==='requested_by_name'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN requested_by_name text').run();
+  if(!requestColumns.results.some(column=>column.name==='authorized_by_name'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN authorized_by_name text').run();
+  await env.DB!.batch([env.DB!.prepare('CREATE INDEX IF NOT EXISTS fueling_trip_idx ON fueling (trip_id)'),env.DB!.prepare('CREATE INDEX IF NOT EXISTS fueling_request_idx ON fueling (fuel_request_id)')]);
+  return Response.json({ok:true});
+ }catch{return Response.json({error:'Não foi possível preparar a atualização do banco.'},{status:503})}
+}
