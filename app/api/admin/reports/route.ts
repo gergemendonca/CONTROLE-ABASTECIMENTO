@@ -8,9 +8,15 @@ function isoDate(value:string|null,fallback:string){
  return parsed;
 }
 
+async function ensureClientPaidColumn(){
+ const columns=await env.DB!.prepare('PRAGMA table_info(fuel_requests)').all<{name:string}>();
+ if(!columns.results.some(column=>column.name==='client_paid'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN client_paid integer DEFAULT 0 NOT NULL').run();
+}
+
 export async function GET(req:Request){
  if(!await isAdmin(req))return Response.json({error:'Apenas o administrador pode gerar relatórios.'},{status:403});
  try{
+  await ensureClientPaidColumn();
   const url=new URL(req.url);
   const today=new Date().toISOString().slice(0,10);
   const firstOfMonth=`${today.slice(0,7)}-01`;
@@ -23,7 +29,7 @@ export async function GET(req:Request){
     f.trip_id AS tripId,f.created_at AS createdAt,f.liters,f.amount_cents AS amountCents,
     COALESCE(t.route,'Roteiro não informado') AS route,
     COALESCE(t.total_km,0) AS totalKm,COALESCE(t.total_value_cents,0) AS totalValueCents,
-    COALESCE(fr.payment_status,'') AS paymentStatus,COALESCE(fr.outstanding_cents,0) AS outstandingCents
+    COALESCE(fr.payment_status,'') AS paymentStatus,COALESCE(fr.outstanding_cents,0) AS outstandingCents,COALESCE(fr.client_paid,0) AS clientPaid
    FROM fueling f
    JOIN vehicles v ON v.id=f.vehicle_id
    LEFT JOIN trips t ON t.id=f.trip_id
