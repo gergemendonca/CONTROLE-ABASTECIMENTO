@@ -117,9 +117,19 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
       setMsg("Selecione o veículo e informe corretamente a saída e a chegada antes de confirmar as datas.");
       return;
     }
+    const { vehicleBusy, exactDuplicate } = currentConflicts();
+    if (exactDuplicate) {
+      setDatesConfirmed(false);
+      setLiveConflict({ kind: "duplicate", key: vehicleConflictKey, message: "Este carro já possui uma viagem cadastrada exatamente neste mesmo período. Escolha outro carro ou altere as datas." });
+      return;
+    }
+    if (vehicleBusy && !acceptedConflicts.includes(vehicleConflictKey)) {
+      setDatesConfirmed(false);
+      setLiveConflict({ kind: "vehicle", key: vehicleConflictKey, message: "Já existe uma viagem para este carro no período informado. Há compatibilidade de horário?" });
+      return;
+    }
     setDatesConfirmed(true);
-    checkVehicleConflict();
-    if (!liveConflict) setMsg("Carro e datas confirmados. Agora informe os demais dados da viagem.");
+    setMsg("Carro e datas aceitos ✓ Agora informe os demais dados da viagem.");
   }
   useEffect(() => {
     if (!datesConfirmed || !selectedDriverIds.length || liveConflict) return;
@@ -278,8 +288,8 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                 />
               </label>
             </div>
-            <button type="button" onClick={confirmDates} className="min-h-12 w-full rounded-xl border-2 border-[#1677d8] bg-[#eaf4ff] px-4 py-2 text-lg font-bold text-[#075a9f]">
-              {datesConfirmed ? "Carro e datas confirmados — conferir novamente" : "Confirmar carro e datas"}
+            <button type="button" onClick={confirmDates} className={`min-h-12 w-full rounded-xl border-2 px-4 py-2 text-lg font-bold ${datesConfirmed ? "border-[#178045] bg-[#178045] text-white" : "border-[#1677d8] bg-[#eaf4ff] text-[#075a9f]"}`}>
+              {datesConfirmed ? "✓ Carro e datas aceitos" : "Confirmar carro e datas"}
             </button>
             <label className="block text-lg font-bold">
               Quilometragem total da viagem
@@ -436,7 +446,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
             <section role="dialog" aria-modal="true" className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
               <h2 className="text-2xl font-bold text-[#b3262b]">Conflito de viagem</h2>
               <p className="mt-4 rounded-xl bg-amber-50 p-4 text-lg">{liveConflict.message}</p>
-              {liveConflict.kind === "duplicate" ? <button type="button" onClick={() => { setLiveConflict(null); setCar(""); setMsg("Selecione outro carro ou altere as datas da viagem."); }} className="mt-6 min-h-14 w-full rounded-xl bg-[#1677d8] px-4 py-2 text-lg font-bold text-white">Entendi, alterar cadastro</button> : <div className="mt-6 grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => { setAcceptedConflicts((items) => [...items, liveConflict.key]); setLiveConflict(null); setMsg("Compatibilidade de horário confirmada. Você pode continuar o cadastro."); }} className="min-h-14 rounded-xl bg-[#178045] px-4 py-2 text-lg font-bold text-white">Sim, há compatibilidade</button><button type="button" onClick={() => { const conflict = liveConflict; setLiveConflict(null); if (conflict.kind === "vehicle") setCar(""); else setSelectedDriverIds((ids) => ids.filter((id) => !conflict.driverIds?.includes(id))); setMsg(conflict.kind === "vehicle" ? "Selecione outro carro ou altere as datas." : "Selecione outro motorista."); }} className="min-h-14 rounded-xl border-2 border-[#b3262b] px-4 py-2 text-lg font-bold text-[#b3262b]">Não, alterar seleção</button></div>}
+              {liveConflict.kind === "duplicate" ? <button type="button" onClick={() => { setLiveConflict(null); setCar(""); setDatesConfirmed(false); setMsg("Selecione outro carro ou altere as datas da viagem."); }} className="mt-6 min-h-14 w-full rounded-xl bg-[#1677d8] px-4 py-2 text-lg font-bold text-white">Entendi, alterar cadastro</button> : <div className="mt-6 grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => { const conflict=liveConflict; setAcceptedConflicts((items) => [...items, conflict.key]); setLiveConflict(null); if(conflict.kind==='vehicle')setDatesConfirmed(true); setMsg(conflict.kind==='vehicle'?"Carro e datas aceitos ✓ Você pode continuar o cadastro.":"Compatibilidade de horário confirmada. Você pode continuar o cadastro."); }} className="min-h-14 rounded-xl bg-[#178045] px-4 py-2 text-lg font-bold text-white">Sim, há compatibilidade</button><button type="button" onClick={() => { const conflict = liveConflict; setLiveConflict(null); setDatesConfirmed(false); if (conflict.kind === "vehicle") setCar(""); else setSelectedDriverIds((ids) => ids.filter((id) => !conflict.driverIds?.includes(id))); setMsg(conflict.kind === "vehicle" ? "Selecione outro carro ou altere as datas." : "Selecione outro motorista."); }} className="min-h-14 rounded-xl border-2 border-[#b3262b] px-4 py-2 text-lg font-bold text-[#b3262b]">Não, alterar seleção</button></div>}
             </section>
           </div>
         )}
