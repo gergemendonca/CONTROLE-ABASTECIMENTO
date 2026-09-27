@@ -451,7 +451,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
           </div>
         )}
         {mode !== "new" && <section className="mt-7">
-          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-2xl font-bold">Viagens cadastradas</h2><p className="mt-1 text-base text-slate-600">A mais recentemente cadastrada aparece no topo.</p></div><button type="button" onClick={() => window.location.assign("/admin/viagens/nova")} className="h-12 rounded-xl bg-[#1677d8] px-5 text-lg font-bold text-white">+ Incluir nova viagem</button></div>
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-2xl font-bold">Viagens cadastradas</h2><p className="mt-1 text-base text-slate-600">A mais recentemente cadastrada aparece no topo.</p></div><button type="button" onClick={() => window.location.assign("/admin/viagens/nova")} className="inline-flex min-h-12 w-full shrink-0 items-center justify-center whitespace-nowrap rounded-xl bg-[#1677d8] px-4 py-3 text-center text-base font-bold leading-tight text-white sm:w-auto sm:px-5 sm:text-lg">+ Incluir nova viagem</button></div>
           {trips.length === 0 ? (
             <p className="rounded-2xl bg-white p-5 text-lg">
               Nenhuma viagem salva.
