@@ -12,6 +12,8 @@ type Trip = {
   totalKm: number;
   totalValueCents: number;
   userIds: number[];
+  paymentStatus?: "total" | "parcial" | "nao_pago";
+  outstandingCents?: number;
 };
 type AppUser = {
   id: number;
@@ -24,7 +26,8 @@ const formatDate = (date: string) => date.split("-").reverse().join("/");
 
 export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }) {
   const today = new Date().toISOString().slice(0, 10),
-    formSectionRef = useRef<HTMLElement>(null);
+    formSectionRef = useRef<HTMLElement>(null),
+    queryEditLoaded=useRef(false);
   const [cars, setCars] = useState<any[]>([]),
     [trips, setTrips] = useState<Trip[]>([]),
     [users, setUsers] = useState<AppUser[]>([]);
@@ -34,6 +37,8 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     [route, setRoute] = useState(""),
     [totalKm, setTotalKm] = useState(""),
     [totalValue, setTotalValue] = useState(""),
+    [paymentStatus,setPaymentStatus]=useState<"total"|"parcial"|"nao_pago">("nao_pago"),
+    [outstandingValue,setOutstandingValue]=useState(""),
     [datesConfirmed, setDatesConfirmed] = useState(false),
     [selectedDriverIds, setSelectedDriverIds] = useState<number[]>([]),
     [editing, setEditing] = useState<number | null>(null),
@@ -66,6 +71,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
       setMsg(error.message || "Não foi possível carregar os dados."),
     );
   }, []);
+  useEffect(()=>{const id=Number(new URLSearchParams(window.location.search).get("edit"));if(mode!=="new"||queryEditLoaded.current||!Number.isSafeInteger(id)||users.length===0)return;queryEditLoaded.current=true;void fetch(`/api/trips/${id}/full-edit`,{cache:"no-store"}).then(async response=>{const data:any=await response.json();if(!response.ok)throw Error(data.error);edit(data.trip)}).catch((error:Error)=>setMsg(error.message||"Não foi possível abrir a viagem para edição."));},[mode,users]);
   const drivers = users.filter((user) => user.groupName === "motorista");
   const driverName = (id: number) =>
     drivers.find((user) => user.id === id)?.name || "";
@@ -76,6 +82,8 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     setRoute("");
     setTotalKm("");
     setTotalValue("");
+    setPaymentStatus("nao_pago");
+    setOutstandingValue("");
     setDatesConfirmed(false);
     setSelectedDriverIds([]);
     setEditing(null);
@@ -170,7 +178,13 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
   }
   async function persist(allowConflicts: boolean) {
     const wasEditing = editing !== null,
-      response = await fetch(editing ? `/api/trips/${editing}` : "/api/trips", {
+      totalValueCents=Math.round(Number(String(totalValue).replace(/\./g, "").replace(",", ".")) * 100),
+      outstandingCents=Math.round(Number(String(outstandingValue).replace(/\./g, "").replace(",", ".")) * 100);
+    if(!Number.isSafeInteger(totalValueCents)||totalValueCents<=0)return setMsg("Informe um valor total válido.");
+    if(wasEditing&&paymentStatus==="total"&&outstandingCents!==0)return setMsg("Viagem totalmente paga não pode ter valor em aberto.");
+    if(wasEditing&&paymentStatus==="parcial"&&(!Number.isSafeInteger(outstandingCents)||outstandingCents<=0||outstandingCents>=totalValueCents))return setMsg("No pagamento parcial, o valor em aberto deve ser maior que zero e menor que o valor total.");
+    if(wasEditing&&paymentStatus==="nao_pago"&&outstandingCents!==totalValueCents)return setMsg("Em viagem não paga, o valor em aberto deve ser igual ao valor total.");
+    const response = await fetch(editing ? `/api/trips/${editing}/full-edit` : "/api/trips", {
         method: editing ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -179,8 +193,10 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
           arrivalDate,
           route,
           totalKm: Number(totalKm),
-          totalValueCents: Math.round(Number(String(totalValue).replace(",", ".")) * 100),
+          totalValueCents,
           associatedUserIds: selectedDriverIds,
+          paymentStatus,
+          outstandingCents,
           allowConflicts,
         }),
       }),
@@ -193,7 +209,9 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     await load();
     if (wasEditing) {
       setMsg("Viagem atualizada com sucesso.");
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      const destination=new URLSearchParams(window.location.search).get("return")||"/admin/viagens";
+      if(destination.startsWith("/")&&!destination.startsWith("//")){window.location.assign(destination);return;}
+      window.location.assign("/admin/viagens");
       return;
     }
     clear();
@@ -210,6 +228,8 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     setRoute(trip.route);
     setTotalKm(String(trip.totalKm || ""));
     setTotalValue(((trip.totalValueCents || 0) / 100).toFixed(2).replace(".", ","));
+    setPaymentStatus(trip.paymentStatus||"nao_pago");
+    setOutstandingValue(((trip.outstandingCents ?? trip.totalValueCents ?? 0) / 100).toFixed(2).replace(".", ","));
     setDatesConfirmed(true);
     setSelectedDriverIds(
       trip.userIds.filter((id) => drivers.some((driver) => driver.id === id)),
@@ -318,6 +338,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                 className="mt-2 h-16 w-full rounded-xl border p-3 text-2xl"
               />
             </label>
+            {editing&&<><label className="block text-lg font-bold">Situação de pagamento<select value={paymentStatus} onChange={(event)=>{const status=event.target.value as "total"|"parcial"|"nao_pago";setPaymentStatus(status);if(status==="total")setOutstandingValue("");if(status==="nao_pago")setOutstandingValue(totalValue)}} className="mt-2 h-16 w-full rounded-xl border bg-white p-3 text-xl"><option value="total">Totalmente paga</option><option value="parcial">Parcialmente paga</option><option value="nao_pago">Não paga</option></select></label>{paymentStatus!=="total"&&<label className="block text-lg font-bold">Valor em aberto (R$)<input required inputMode="decimal" value={outstandingValue} onChange={(event)=>setOutstandingValue(event.target.value)} placeholder="Ex.: 350,00" className="mt-2 h-16 w-full rounded-xl border p-3 text-2xl"/></label>}</>}
             <label className="block text-lg font-bold">
               Roteiro
               <textarea
@@ -514,7 +535,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                       <div className="mt-5 flex gap-4">
                         <button
                           type="button"
-                          onClick={() => edit(trip)}
+                          onClick={() => window.location.assign(`/admin/viagens/nova?edit=${trip.id}&return=${encodeURIComponent('/admin/viagens')}`)}
                           className="h-12 rounded-xl bg-[#e7b629] px-5 text-lg font-bold text-[#2c2509]"
                         >
                           Editar
