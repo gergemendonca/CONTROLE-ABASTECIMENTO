@@ -22,6 +22,8 @@ export async function POST(req:Request){
   const fuelingColumns=await env.DB!.prepare('PRAGMA table_info(fueling)').all<{name:string}>();
   if(!fuelingColumns.results.some(column=>column.name==='trip_id'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN trip_id integer').run();
   if(!fuelingColumns.results.some(column=>column.name==='fuel_request_id'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN fuel_request_id integer').run();
+  if(!fuelingColumns.results.some(column=>column.name==='launched_by'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN launched_by integer').run();
+  if(!fuelingColumns.results.some(column=>column.name==='launched_by_name'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN launched_by_name text').run();
   const requestColumns=await env.DB!.prepare('PRAGMA table_info(fuel_requests)').all<{name:string}>();
   if(!requestColumns.results.some(column=>column.name==='requested_by_name'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN requested_by_name text').run();
   if(!requestColumns.results.some(column=>column.name==='authorized_by_name'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN authorized_by_name text').run();
