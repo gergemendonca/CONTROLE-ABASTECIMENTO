@@ -12,6 +12,7 @@ type Trip = {
   totalKm: number;
   totalValueCents: number;
   userIds: number[];
+  requestStatus?: "missing" | "pending" | "authorized";
   paymentStatus?: "total" | "parcial" | "nao_pago";
   outstandingCents?: number;
 };
@@ -23,6 +24,13 @@ type AppUser = {
 type Confirmation = { messages: string[]; hasConflict: boolean };
 type LiveConflict = { kind: "vehicle" | "drivers" | "duplicate"; key: string; message: string; driverIds?: number[] };
 const formatDate = (date: string) => date.split("-").reverse().join("/");
+const tripStatus = (status?: Trip["requestStatus"]) => {
+  if (status === "authorized")
+    return { icon: "✓", label: "Autorizado", className: "border-emerald-300 bg-emerald-50 text-emerald-800" };
+  if (status === "pending")
+    return { icon: "!", label: "Pendente de autorização", className: "border-red-300 bg-red-50 text-red-700" };
+  return { icon: "●", label: "Falta solicitar", className: "border-amber-300 bg-amber-50 text-amber-800" };
+};
 
 export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }) {
   const today = new Date().toISOString().slice(0, 10),
@@ -485,6 +493,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                   .filter((id) => drivers.some((driver) => driver.id === id))
                   .map(driverName)
                   .filter(Boolean);
+                const status = tripStatus(trip.requestStatus);
                 return (
                   <article
                     key={trip.id}
@@ -494,6 +503,10 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                     <p className="mt-1 text-lg">
                       {formatDate(trip.departureDate)} até{" "}
                       {formatDate(trip.arrivalDate)}
+                    </p>
+                    <p className={`mt-3 inline-flex items-center gap-2 rounded-full border-2 px-3 py-2 text-base font-extrabold ${status.className}`}>
+                      <span className="grid h-6 w-6 place-items-center rounded-full border-2 border-current text-lg leading-none" aria-hidden="true">{status.icon}</span>
+                      {status.label}
                     </p>
                     <p className="mt-2 text-lg text-slate-700">{trip.route}</p>
                     <p className="mt-2 text-lg">
