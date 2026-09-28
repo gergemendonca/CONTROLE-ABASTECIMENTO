@@ -41,10 +41,10 @@ export async function GET(req:Request){
  const access=await requireRole(req,'solicitante','autorizador','avisado');
  if(!access.user)return Response.json({error:access.error},{status:403});
  await ensureAuditNames();
- const params=new URL(req.url).searchParams,requestedStatus=params.get('status'),status=requestedStatus==='pending'||requestedStatus==='authorized'?requestedStatus:null,requestId=Number(params.get('pedido')),byId=Number.isSafeInteger(requestId)&&requestId>0;
+ const params=new URL(req.url).searchParams,requestedStatus=params.get('status'),status=requestedStatus==='pending'||requestedStatus==='authorized'?requestedStatus:null,requestId=Number(params.get('pedido')),byId=Number.isSafeInteger(requestId)&&requestId>0,tripId=Number(params.get('tripId')),byTrip=Number.isSafeInteger(tripId)&&tripId>0;
  const canViewFinancial=access.user.roles.includes('admin')||access.user.roles.includes('autorizador')||access.user.groupName==='gerencia';
  let where=" WHERE NOT EXISTS (SELECT 1 FROM fueling completed WHERE completed.trip_id=f.trip_id) AND (f.status='authorized' OR COALESCE(t.arrival_date,t.travel_date)>=?)",binds:unknown[]=[today()];
- if(byId){where+=' AND f.id=?';binds.push(requestId)}else if(status){where+=' AND f.status=?';binds.push(status)}
+ if(byId){where+=' AND f.id=?';binds.push(requestId)}else if(byTrip){where+=' AND f.trip_id=?';binds.push(tripId)}else if(status){where+=' AND f.status=?';binds.push(status)}
  const q=`SELECT f.id,f.trip_id AS tripId,f.liters,f.route_km AS routeKm,f.payment_status AS paymentStatus,f.outstanding_cents AS outstandingCents,COALESCE(f.client_paid,0) AS clientPaid,f.status,f.created_at AS createdAt,f.authorized_at AS authorizedAt,v.label AS vehicleLabel,t.route,t.departure_date AS departureDate,t.arrival_date AS arrivalDate,COALESCE(t.total_value_cents,0) AS totalValueCents,COALESCE(f.requested_by_name,u.name,'Não informado') AS requestedBy,COALESCE(f.authorized_by_name,a.name,CASE WHEN f.status='authorized' THEN 'George Mendonça' END,'Não informado') AS authorizedBy FROM fuel_requests f JOIN trips t ON t.id=f.trip_id JOIN vehicles v ON v.id=t.vehicle_id LEFT JOIN app_users u ON u.id=f.requested_by LEFT JOIN app_users a ON a.id=f.authorized_by${where} ORDER BY CASE f.status WHEN 'pending' THEN 0 ELSE 1 END,f.created_at DESC`;
  const rows=await env.DB!.prepare(q).bind(...binds).all();
  return Response.json({requests:(rows.results||[]).map((item:any)=>canViewFinancial?item:{...item,totalValueCents:null,paymentStatus:null,outstandingCents:null}),canViewFinancial});
