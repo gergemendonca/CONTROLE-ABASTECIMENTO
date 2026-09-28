@@ -6,6 +6,7 @@ export async function POST(req:Request){
  try{
   await env.DB!.batch([
    env.DB!.prepare('CREATE TABLE IF NOT EXISTS app_users (id integer PRIMARY KEY AUTOINCREMENT NOT NULL,name text NOT NULL,username text NOT NULL,password_hash text NOT NULL,roles text NOT NULL,active integer DEFAULT 1 NOT NULL,created_at text NOT NULL)'),
+   env.DB!.prepare('CREATE TABLE IF NOT EXISTS app_settings (key text PRIMARY KEY NOT NULL,value text NOT NULL)'),
    env.DB!.prepare('CREATE UNIQUE INDEX IF NOT EXISTS app_users_username_unique ON app_users (username)'),
    env.DB!.prepare('CREATE TABLE IF NOT EXISTS trip_users (trip_id integer NOT NULL,user_id integer NOT NULL,FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE,FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE)'),
    env.DB!.prepare('CREATE UNIQUE INDEX IF NOT EXISTS trip_users_trip_user_unique ON trip_users (trip_id,user_id)'),
@@ -32,7 +33,17 @@ export async function POST(req:Request){
   if(!requestColumns.results.some(column=>column.name==='authorized_by_name'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN authorized_by_name text').run();
   if(!requestColumns.results.some(column=>column.name==='client_paid'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN client_paid integer DEFAULT 0 NOT NULL').run();
   await env.DB!.batch([env.DB!.prepare('CREATE INDEX IF NOT EXISTS fueling_trip_idx ON fueling (trip_id)'),env.DB!.prepare('CREATE INDEX IF NOT EXISTS fueling_request_idx ON fueling (fuel_request_id)')]);
+  const resetMarker=await env.DB!.prepare("SELECT value FROM app_settings WHERE key='test_data_reset_v1'").first();
+  if(!resetMarker)await env.DB!.batch([
+   env.DB!.prepare('DELETE FROM fueling_items'),
+   env.DB!.prepare('DELETE FROM fueling'),
+   env.DB!.prepare('DELETE FROM app_notifications'),
+   env.DB!.prepare('DELETE FROM fuel_requests'),
+   env.DB!.prepare('DELETE FROM trip_users'),
+   env.DB!.prepare('DELETE FROM trips'),
+   env.DB!.prepare("INSERT INTO app_settings (key,value) VALUES ('test_data_reset_v1',?)").bind(new Date().toISOString())
+  ]);
   await ensureUserPasswordPolicy();
-  return Response.json({ok:true});
+  return Response.json({ok:true,testDataCleared:!resetMarker});
  }catch{return Response.json({error:'Não foi possível preparar a atualização do banco.'},{status:503})}
 }
