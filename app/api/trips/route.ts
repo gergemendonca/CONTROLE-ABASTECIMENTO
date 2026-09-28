@@ -13,14 +13,14 @@ export async function GET(req:Request){
  try{
   const url=new URL(req.url),vehicleId=Number(url.searchParams.get('vehicleId')),date=url.searchParams.get('date'),from=url.searchParams.get('from'),to=url.searchParams.get('to'),available=url.searchParams.get('available')==='1';
   const headers={'Cache-Control':'no-store, max-age=0'};
-  const compactFields='id,vehicle_id AS vehicleId,COALESCE(departure_date,travel_date) AS departureDate,COALESCE(arrival_date,travel_date) AS arrivalDate,route,total_km AS totalKm,COALESCE(total_value_cents,0) AS totalValueCents';
+  const compactFields="id,vehicle_id AS vehicleId,COALESCE(departure_date,travel_date) AS departureDate,COALESCE(arrival_date,travel_date) AS arrivalDate,route,total_km AS totalKm,COALESCE(total_value_cents,0) AS totalValueCents,COALESCE((SELECT GROUP_CONCAT(au.name) FROM trip_users tu JOIN app_users au ON au.id=tu.user_id WHERE tu.trip_id=trips.id AND au.group_name='motorista'),'') AS associatedDriverNames";
   if(vehicleId&&from&&to&&dateOk(from)&&dateOk(to)&&to>=from){
    const rows=await env.DB!.prepare(`SELECT ${compactFields} FROM trips WHERE vehicle_id=? AND COALESCE(arrival_date,travel_date)>=? AND COALESCE(departure_date,travel_date)<=? ORDER BY COALESCE(departure_date,travel_date),id`).bind(vehicleId,from,to).all();
-   return Response.json({trips:rows.results||[]},{headers});
+   return Response.json({trips:(rows.results||[]).map((trip:any)=>({...trip,associatedDriverNames:trip.associatedDriverNames?String(trip.associatedDriverNames).split(','):[]}))},{headers});
   }
   if(vehicleId&&date){
    const trip=await env.DB!.prepare(`SELECT ${compactFields} FROM trips WHERE vehicle_id=? AND COALESCE(departure_date,travel_date)<=? AND COALESCE(arrival_date,travel_date)>=? ORDER BY COALESCE(departure_date,travel_date) DESC LIMIT 1`).bind(vehicleId,date,date).first();
-   return Response.json({trip:trip||null},{headers});
+   return Response.json({trip:trip?{...trip,associatedDriverNames:trip.associatedDriverNames?String(trip.associatedDriverNames).split(','):[]}:null},{headers});
   }
   const access=await requireRole(req,'solicitante','autorizador','avisado');
   if(!access.user)return Response.json({error:access.error},{status:403,headers});
