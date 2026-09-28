@@ -53,7 +53,7 @@ export async function getSession(req:Request):Promise<SessionUser|null>{
   return {id:current.id,name:current.name,username:current.username,roles:normalizeRoles(current.roles),groupName:current.groupName||'motorista',passwordChangeRequired:!!current.passwordChangeRequired};
  }catch{return null}
 }
-export async function isAdmin(req:Request){const user=await getSession(req);return !!user&&!user.passwordChangeRequired&&user.roles.includes('admin')}
+export async function isAdmin(req:Request){const user=await getSession(req);return !!user&&!user.passwordChangeRequired&&(user.roles.includes('admin')||user.groupName==='adm'||user.groupName==='gerencia')}
 export async function requireRole(req:Request,...allowed:Role[]){const user=await getSession(req);if(!user)return {user:null,error:'Faça login para continuar.'};if(user.passwordChangeRequired)return {user:null,error:'Troque sua senha antes de continuar.'};if(user.roles.includes('admin')||allowed.some(role=>user.roles.includes(role)))return {user};return {user:null,error:'Seu usuário não tem permissão para esta ação.'}}
 export function sessionCookie(token:string){return `app_access=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${60*60*24*180}`}
 export function clearSessionCookie(){return 'app_access=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0'}
