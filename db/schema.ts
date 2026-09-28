@@ -17,6 +17,8 @@ export const fueling = sqliteTable('fueling', {
   amountCents: integer('amount_cents').notNull().default(0),
   launchedBy: integer('launched_by').references(() => appUsers.id),
   launchedByName: text('launched_by_name'),
+  directLaunch: integer('direct_launch').notNull().default(0),
+  authorizationObservation: text('authorization_observation'),
   createdAt: text('created_at').notNull(),
 });
 export const fuelingItems=sqliteTable('fueling_items',{

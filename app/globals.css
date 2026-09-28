@@ -9,3 +9,13 @@ main.min-h-\[100dvh\] svg.h-10.w-10 {
   width: 3rem;
   height: 3rem;
 }
+
+/* Mantém o cartão principal compacto e apresenta a opção completa ao usuário. */
+main.min-h-\[100dvh\] > div > section > button:first-child {
+  font-size: 0;
+}
+main.min-h-\[100dvh\] > div > section > button:first-child::after {
+  content: "Lançar ou pedir abastecimento";
+  font-size: clamp(1.5rem, 4vw, 2rem);
+  line-height: 1.15;
+}

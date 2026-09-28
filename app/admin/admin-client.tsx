@@ -179,7 +179,8 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
   async function persist(allowConflicts: boolean) {
     const wasEditing = editing !== null,
       totalValueCents=Math.round(Number(String(totalValue).replace(/\./g, "").replace(",", ".")) * 100),
-      outstandingCents=Math.round(Number(String(outstandingValue).replace(/\./g, "").replace(",", ".")) * 100);
+      enteredOutstandingCents=Math.round(Number(String(outstandingValue).replace(/\./g, "").replace(",", ".")) * 100),
+      outstandingCents=paymentStatus==="total"?0:paymentStatus==="nao_pago"?totalValueCents:enteredOutstandingCents;
     if(!Number.isSafeInteger(totalValueCents)||totalValueCents<=0)return setMsg("Informe um valor total válido.");
     if(wasEditing&&paymentStatus==="total"&&outstandingCents!==0)return setMsg("Viagem totalmente paga não pode ter valor em aberto.");
     if(wasEditing&&paymentStatus==="parcial"&&(!Number.isSafeInteger(outstandingCents)||outstandingCents<=0||outstandingCents>=totalValueCents))return setMsg("No pagamento parcial, o valor em aberto deve ser maior que zero e menor que o valor total.");
@@ -338,7 +339,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                 className="mt-2 h-16 w-full rounded-xl border p-3 text-2xl"
               />
             </label>
-            {editing&&<><label className="block text-lg font-bold">Situação de pagamento<select value={paymentStatus} onChange={(event)=>{const status=event.target.value as "total"|"parcial"|"nao_pago";setPaymentStatus(status);if(status==="total")setOutstandingValue("");if(status==="nao_pago")setOutstandingValue(totalValue)}} className="mt-2 h-16 w-full rounded-xl border bg-white p-3 text-xl"><option value="total">Totalmente paga</option><option value="parcial">Parcialmente paga</option><option value="nao_pago">Não paga</option></select></label>{paymentStatus!=="total"&&<label className="block text-lg font-bold">Valor em aberto (R$)<input required inputMode="decimal" value={outstandingValue} onChange={(event)=>setOutstandingValue(event.target.value)} placeholder="Ex.: 350,00" className="mt-2 h-16 w-full rounded-xl border p-3 text-2xl"/></label>}</>}
+            {editing&&<><label className="block text-lg font-bold">Situação de pagamento<select value={paymentStatus} onChange={(event)=>{const status=event.target.value as "total"|"parcial"|"nao_pago";setPaymentStatus(status);if(status==="total")setOutstandingValue("");if(status==="nao_pago")setOutstandingValue(totalValue)}} className="mt-2 h-16 w-full rounded-xl border bg-white p-3 text-xl"><option value="total">Totalmente paga</option><option value="parcial">Parcialmente paga</option><option value="nao_pago">Não paga</option></select></label>{paymentStatus==="parcial"&&<label className="block text-lg font-bold">Valor em aberto (R$)<input required inputMode="decimal" value={outstandingValue} onChange={(event)=>setOutstandingValue(event.target.value)} placeholder="Ex.: 350,00" className="mt-2 h-16 w-full rounded-xl border p-3 text-2xl"/></label>}</>}
             <label className="block text-lg font-bold">
               Roteiro
               <textarea
