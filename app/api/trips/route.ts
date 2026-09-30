@@ -18,7 +18,7 @@ export async function GET(req:Request){
    if(!access.user)return Response.json({error:access.error},{status:403,headers});
    const management=access.user.bootstrap||access.user.roles.includes('admin')||access.user.groupName==='adm'||access.user.groupName==='gerencia';
    const scope=management?'':` AND EXISTS (SELECT 1 FROM trip_users mine WHERE mine.trip_id=trips.id AND mine.user_id=?)`;
-   const sql=`SELECT ${compactFields} FROM trips WHERE vehicle_id=? AND (COALESCE(arrival_date,travel_date)>=date('now') OR EXISTS (SELECT 1 FROM fuel_requests fr WHERE fr.trip_id=trips.id AND fr.status='authorized' AND fr.created_at>=datetime('now','-5 days') AND NOT EXISTS (SELECT 1 FROM fueling used WHERE used.fuel_request_id=fr.id)))${scope} ORDER BY COALESCE(departure_date,travel_date) DESC,id DESC`;
+   const sql=`SELECT ${compactFields} FROM trips WHERE vehicle_id=? AND NOT EXISTS (SELECT 1 FROM fueling done WHERE done.trip_id=trips.id) AND (COALESCE(arrival_date,travel_date)>=date('now') OR EXISTS (SELECT 1 FROM fuel_requests fr WHERE fr.trip_id=trips.id AND fr.status='authorized' AND fr.created_at>=datetime('now','-5 days') AND NOT EXISTS (SELECT 1 FROM fueling used WHERE used.fuel_request_id=fr.id)))${scope} ORDER BY COALESCE(departure_date,travel_date) DESC,id DESC`;
    const rows=management?await env.DB!.prepare(sql).bind(vehicleId).all():await env.DB!.prepare(sql).bind(vehicleId,access.user.id).all();
    return Response.json({trips:(rows.results||[]).map((trip:any)=>({...trip,associatedDriverNames:trip.associatedDriverNames?String(trip.associatedDriverNames).split(','):[]}))},{headers});
   }
