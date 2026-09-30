@@ -21,8 +21,6 @@ export async function PUT(req:Request,{params}:Context){
   if(input.paymentStatus==='total'&&input.outstandingCents!==0)return Response.json({error:'Viagem totalmente paga não pode ter valor em aberto.'},{status:400});
   if(input.paymentStatus==='parcial'&&(input.outstandingCents<=0||input.outstandingCents>=total))return Response.json({error:'No pagamento parcial, o valor em aberto deve ser maior que zero e menor que o valor total.'},{status:400});
   if(input.paymentStatus==='nao_pago'&&input.outstandingCents!==total)return Response.json({error:'Em viagem não paga, o valor em aberto deve ser igual ao valor total.'},{status:400});
-  const duplicate=await env.DB!.prepare('SELECT id FROM trips WHERE vehicle_id=? AND id<>? AND COALESCE(departure_date,travel_date)=? AND COALESCE(arrival_date,travel_date)=? LIMIT 1').bind(input.vehicleId,id,input.departureDate,input.arrivalDate).first();
-  if(duplicate)return Response.json({error:'Já existe outra viagem para este carro exatamente neste período.'},{status:409});
   const vehicleBusy=await env.DB!.prepare('SELECT id FROM trips WHERE vehicle_id=? AND id<>? AND COALESCE(departure_date,travel_date)<=? AND COALESCE(arrival_date,travel_date)>=? LIMIT 1').bind(input.vehicleId,id,input.arrivalDate,input.departureDate).first();
   if(vehicleBusy&&!input.allowConflicts)return Response.json({error:'Há conflito de horário para este carro. Confirme a compatibilidade antes de salvar.'},{status:409});
   const automatic=await env.DB!.prepare("SELECT id FROM app_users WHERE active=1 AND group_name IN ('adm','gerencia')").all<{id:number}>();

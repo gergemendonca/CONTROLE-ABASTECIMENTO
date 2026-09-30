@@ -119,12 +119,8 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
   function checkVehicleConflict() {
     if (!car || !departureDate || !arrivalDate || arrivalDate < departureDate) return;
     const { vehicleBusy, exactDuplicate } = currentConflicts();
-    if (exactDuplicate) {
-      setLiveConflict({ kind: "duplicate", key: vehicleConflictKey, message: "Este carro já possui uma viagem cadastrada exatamente neste mesmo período. Escolha outro carro ou altere as datas." });
-      return;
-    }
     if (vehicleBusy && !acceptedConflicts.includes(vehicleConflictKey)) {
-      setLiveConflict({ kind: "vehicle", key: vehicleConflictKey, message: "Já existe uma viagem para este carro no período informado. Há compatibilidade de horário?" });
+      setLiveConflict({ kind: "vehicle", key: vehicleConflictKey, message: "JÁ TEM VIAGEM PARA ESTE CARRO NESTA DATA. HÁ COMPATIBILIDADE DE HORÁRIO?" });
       return;
     }
   }
@@ -134,14 +130,9 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
       return;
     }
     const { vehicleBusy, exactDuplicate } = currentConflicts();
-    if (exactDuplicate) {
-      setDatesConfirmed(false);
-      setLiveConflict({ kind: "duplicate", key: vehicleConflictKey, message: "Este carro já possui uma viagem cadastrada exatamente neste mesmo período. Escolha outro carro ou altere as datas." });
-      return;
-    }
     if (vehicleBusy && !acceptedConflicts.includes(vehicleConflictKey)) {
       setDatesConfirmed(false);
-      setLiveConflict({ kind: "vehicle", key: vehicleConflictKey, message: "Já existe uma viagem para este carro no período informado. Há compatibilidade de horário?" });
+      setLiveConflict({ kind: "vehicle", key: vehicleConflictKey, message: "JÁ TEM VIAGEM PARA ESTE CARRO NESTA DATA. HÁ COMPATIBILIDADE DE HORÁRIO?" });
       return;
     }
     setDatesConfirmed(true);
@@ -161,10 +152,9 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
         `Você selecionou apenas ${driverName(selectedDriverIds[0])}. Confirma que será o único motorista desta viagem?`,
       );
     const { vehicleBusy, exactDuplicate, busyDriverIds } = currentConflicts();
-    if (exactDuplicate) return setMsg("Já existe uma viagem cadastrada para este carro exatamente neste mesmo período. Escolha outro carro ou altere as datas.");
     if (vehicleBusy && !acceptedConflicts.includes(vehicleConflictKey))
       messages.push(
-        "Já existe uma viagem para este carro no mesmo período. Há compatibilidade de horário?",
+        "JÁ TEM VIAGEM PARA ESTE CARRO NESTA DATA. HÁ COMPATIBILIDADE DE HORÁRIO?",
       );
     const busyDrivers = busyDriverIds
       .map(driverName)
@@ -474,8 +464,9 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
         {liveConflict && (
           <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-5">
             <section role="dialog" aria-modal="true" className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
-              <h2 className="text-2xl font-bold text-[#b3262b]">Conflito de viagem</h2>
-              <p className="mt-4 rounded-xl bg-amber-50 p-4 text-lg">{liveConflict.message}</p>
+              <div className="flex items-center gap-3 rounded-2xl bg-red-50 p-4 text-[#b3262b]"><span aria-hidden="true" className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#b3262b] text-3xl font-black text-white">!</span><h2 className="text-2xl font-extrabold leading-tight">ALERTA DE CONFLITO</h2></div>
+              <p className="mt-4 rounded-xl border-2 border-[#b3262b] bg-amber-50 p-4 text-xl font-extrabold leading-snug text-[#7f1d1d]">{liveConflict.message}</p>
+              {liveConflict.kind === "vehicle"&&<p className="mt-3 text-lg font-bold text-slate-700">Confirme somente se os horários realmente não se cruzam.</p>}
               {liveConflict.kind === "duplicate" ? <button type="button" onClick={() => { setLiveConflict(null); setCar(""); setDatesConfirmed(false); setMsg("Selecione outro carro ou altere as datas da viagem."); }} className="mt-6 min-h-14 w-full rounded-xl bg-[#1677d8] px-4 py-2 text-lg font-bold text-white">Entendi, alterar cadastro</button> : <div className="mt-6 grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => { const conflict=liveConflict; setAcceptedConflicts((items) => [...items, conflict.key]); setLiveConflict(null); if(conflict.kind==='vehicle')setDatesConfirmed(true); setMsg(conflict.kind==='vehicle'?"Carro e datas aceitos ✓ Você pode continuar o cadastro.":"Compatibilidade de horário confirmada. Você pode continuar o cadastro."); }} className="min-h-14 rounded-xl bg-[#178045] px-4 py-2 text-lg font-bold text-white">Sim, há compatibilidade</button><button type="button" onClick={() => { const conflict = liveConflict; setLiveConflict(null); setDatesConfirmed(false); if (conflict.kind === "vehicle") setCar(""); else setSelectedDriverIds((ids) => ids.filter((id) => !conflict.driverIds?.includes(id))); setMsg(conflict.kind === "vehicle" ? "Selecione outro carro ou altere as datas." : "Selecione outro motorista."); }} className="min-h-14 rounded-xl border-2 border-[#b3262b] px-4 py-2 text-lg font-bold text-[#b3262b]">Não, alterar seleção</button></div>}
             </section>
           </div>

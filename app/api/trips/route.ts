@@ -5,7 +5,6 @@ export const dynamic='force-dynamic';
 const dateOk=(value:string)=>/^\d{4}-\d{2}-\d{2}$/.test(value);
 type TripInput={vehicleId:number;departureDate:string;arrivalDate:string;route:string;totalKm:number;totalValueCents:number;associatedUserIds?:number[];allowConflicts?:boolean};
 const rangeConflict=(vehicleId:number,departureDate:string,arrivalDate:string)=>env.DB!.prepare('SELECT id FROM trips WHERE vehicle_id=? AND COALESCE(departure_date,travel_date)<=? AND COALESCE(arrival_date,travel_date)>=? LIMIT 1').bind(vehicleId,arrivalDate,departureDate).first();
-const samePeriod=(vehicleId:number,departureDate:string,arrivalDate:string)=>env.DB!.prepare('SELECT id FROM trips WHERE vehicle_id=? AND COALESCE(departure_date,travel_date)=? AND COALESCE(arrival_date,travel_date)=? LIMIT 1').bind(vehicleId,departureDate,arrivalDate).first();
 async function driverConflict(driverIds:number[],departureDate:string,arrivalDate:string){for(const driverId of driverIds){const row=await env.DB!.prepare('SELECT t.id FROM trips t JOIN trip_users tu ON tu.trip_id=t.id WHERE tu.user_id=? AND COALESCE(t.departure_date,t.travel_date)<=? AND COALESCE(t.arrival_date,t.travel_date)>=? LIMIT 1').bind(driverId,arrivalDate,departureDate).first();if(row)return true}return false}
 function valid(input:TripInput){return Number.isInteger(input.vehicleId)&&dateOk(input.departureDate)&&dateOk(input.arrivalDate)&&input.arrivalDate>=input.departureDate&&typeof input.route==='string'&&!!input.route.trim()&&input.route.trim().length<=300&&Number.isSafeInteger(input.totalKm)&&input.totalKm>0&&Number.isSafeInteger(input.totalValueCents)&&input.totalValueCents>0&&Array.isArray(input.associatedUserIds)&&input.associatedUserIds.length<=3&&input.associatedUserIds.every(Number.isSafeInteger)}
 
@@ -38,7 +37,6 @@ export async function POST(req:Request){
  try{
   const input=await req.json() as TripInput;
   if(!valid(input))return Response.json({error:'Confira veículo, datas, quilometragem, valor total, roteiro e até três motoristas.'},{status:400});
-  if(await samePeriod(input.vehicleId,input.departureDate,input.arrivalDate))return Response.json({error:'Já existe uma viagem cadastrada para este carro exatamente neste mesmo período. Não é permitido duplicar a viagem.'},{status:409});
   const selected=[...new Set(input.associatedUserIds||[])];
   const [vehicleBusy,driverBusy]=await Promise.all([rangeConflict(input.vehicleId,input.departureDate,input.arrivalDate),driverConflict(selected,input.departureDate,input.arrivalDate)]);
   if((vehicleBusy||driverBusy)&&!input.allowConflicts)return Response.json({error:'Já existe viagem para este carro ou motorista no período. Confirme a compatibilidade de horário antes de salvar.',conflicts:{vehicle:!!vehicleBusy,driver:driverBusy}},{status:409});
