@@ -35,9 +35,22 @@ export async function GET(req:Request){
    JOIN vehicles v ON v.id=f.vehicle_id
    LEFT JOIN trips t ON t.id=f.trip_id
    LEFT JOIN fuel_requests fr ON fr.id=(SELECT id FROM fuel_requests q WHERE q.trip_id=f.trip_id ORDER BY q.id DESC LIMIT 1)
-   WHERE date(f.created_at,'localtime') BETWEEN ? AND ?
+   WHERE date(f.created_at,'-3 hours') BETWEEN ? AND ?
    ORDER BY f.created_at DESC,f.id DESC
   `).bind(from,to).all();
-  return Response.json({from,to,generatedAt:new Date().toISOString(),records:rows.results||[]});
+  const trips=await env.DB!.prepare(`
+   SELECT t.id,${controlSql('t')},v.label AS vehicleLabel,t.route,
+    COALESCE(t.departure_date,t.travel_date) AS departureDate,
+    COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,
+    COALESCE(t.total_km,0) AS totalKm,COALESCE(t.total_value_cents,0) AS totalValueCents,
+    CASE WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1)='pending' THEN 'pending'
+         WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1)='authorized' THEN CASE WHEN EXISTS (SELECT 1 FROM fueling completed WHERE completed.fuel_request_id=(SELECT fr.id FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1)) THEN 'fueled' ELSE 'authorized' END
+         WHEN EXISTS (SELECT 1 FROM fueling completed WHERE completed.trip_id=t.id) THEN 'fueled'
+         ELSE 'missing' END AS status
+   FROM trips t JOIN vehicles v ON v.id=t.vehicle_id
+   WHERE COALESCE(t.arrival_date,t.travel_date)>=? AND COALESCE(t.departure_date,t.travel_date)<=?
+   ORDER BY COALESCE(t.departure_date,t.travel_date) DESC,t.id DESC
+  `).bind(from,to).all();
+  return Response.json({from,to,generatedAt:new Date().toISOString(),records:rows.results||[],trips:trips.results||[]});
  }catch{return Response.json({error:'Não foi possível gerar o relatório.'},{status:503});}
 }

@@ -13,7 +13,7 @@ type Trip = {
   totalValueCents: number;
   controlNumber?: string;
   userIds: number[];
-  requestStatus?: "missing" | "pending" | "authorized";
+  requestStatus?: "missing" | "pending" | "authorized" | "fueled";
   paymentStatus?: "total" | "parcial" | "nao_pago";
   outstandingCents?: number;
   externalDriverNames?: string[];
@@ -27,6 +27,8 @@ type Confirmation = { messages: string[]; hasConflict: boolean };
 type LiveConflict = { kind: "vehicle" | "drivers" | "duplicate"; key: string; message: string; driverIds?: number[] };
 const formatDate = (date: string) => date.split("-").reverse().join("/");
 const tripStatus = (status?: Trip["requestStatus"]) => {
+  if (status === "fueled")
+    return { icon: "✓", label: "Abastecido", className: "border-sky-300 bg-sky-50 text-sky-800" };
   if (status === "authorized")
     return { icon: "✓", label: "Autorizado", className: "border-emerald-300 bg-emerald-50 text-emerald-800" };
   if (status === "pending")
