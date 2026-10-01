@@ -38,6 +38,7 @@ export const trips=sqliteTable('trips',{
  route:text('route').notNull(),
  totalKm:integer('total_km').notNull().default(0),
  totalValueCents:integer('total_value_cents').notNull().default(0),
+ controlNumber:text('control_number'),
 });
 
 export const whatsappContacts=sqliteTable('whatsapp_contacts',{
@@ -61,6 +62,11 @@ export const appUsers=sqliteTable('app_users',{
 export const tripUsers=sqliteTable('trip_users',{
  tripId:integer('trip_id').notNull().references(()=>trips.id,{onDelete:'cascade'}),
  userId:integer('user_id').notNull().references(()=>appUsers.id,{onDelete:'cascade'}),
+});
+
+export const tripExternalDrivers=sqliteTable('trip_external_drivers',{
+ tripId:integer('trip_id').notNull().references(()=>trips.id,{onDelete:'cascade'}),
+ name:text('name').notNull(),
 });
 
 export const fuelRequests=sqliteTable('fuel_requests',{

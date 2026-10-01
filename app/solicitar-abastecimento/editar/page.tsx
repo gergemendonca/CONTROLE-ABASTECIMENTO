@@ -2,7 +2,7 @@
 
 import {useEffect,useState} from 'react';
 
-type Trip={id:number;vehicleId:number;vehicleLabel:string;departureDate:string;arrivalDate:string;route:string;totalKm:number;totalValueCents:number;userIds:number[]};
+type Trip={id:number;controlNumber?:string;vehicleId:number;vehicleLabel:string;departureDate:string;arrivalDate:string;route:string;totalKm:number;totalValueCents:number;userIds:number[]};
 const draftKey='sd-tour-solicitacao-multipla-rascunho';
 const money=(value:number)=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(value/100);
 const decimal=(value:string)=>Number(value.trim().replace(/\./g,'').replace(',','.'));

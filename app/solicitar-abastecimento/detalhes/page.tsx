@@ -2,7 +2,7 @@
 
 import {useEffect,useRef,useState} from 'react';
 
-type Trip={id:number;vehicleLabel:string;route:string;totalKm:number;totalValueCents?:number};
+type Trip={id:number;controlNumber?:string;vehicleLabel:string;route:string;totalKm:number;totalValueCents?:number};
 type Detail={liters:string;paymentStatus:'total'|'parcial'|'nao_pago';balance:string;clientPaid:boolean};
 type Errors=Record<number,string>;
 const draftKey='sd-tour-solicitacao-multipla-rascunho';

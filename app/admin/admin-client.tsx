@@ -11,10 +11,12 @@ type Trip = {
   route: string;
   totalKm: number;
   totalValueCents: number;
+  controlNumber?: string;
   userIds: number[];
   requestStatus?: "missing" | "pending" | "authorized";
   paymentStatus?: "total" | "parcial" | "nao_pago";
   outstandingCents?: number;
+  externalDriverNames?: string[];
 };
 type AppUser = {
   id: number;
@@ -49,6 +51,8 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     [outstandingValue,setOutstandingValue]=useState(""),
     [datesConfirmed, setDatesConfirmed] = useState(false),
     [selectedDriverIds, setSelectedDriverIds] = useState<number[]>([]),
+    [externalDriverNames,setExternalDriverNames]=useState<string[]>([]),
+    [externalDriverName,setExternalDriverName]=useState(""),
     [editing, setEditing] = useState<number | null>(null),
     [confirmId, setConfirmId] = useState<number | null>(null),
     [confirmation, setConfirmation] = useState<Confirmation | null>(null),
@@ -94,6 +98,8 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     setOutstandingValue("");
     setDatesConfirmed(false);
     setSelectedDriverIds([]);
+    setExternalDriverNames([]);
+    setExternalDriverName("");
     setEditing(null);
     setConfirmId(null);
     setConfirmation(null);
@@ -109,6 +115,16 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
   }
   const vehicleConflictKey = `vehicle:${car}:${departureDate}:${arrivalDate}`;
   const driversConflictKey = `drivers:${[...selectedDriverIds].sort((a, b) => a - b).join(",")}:${departureDate}:${arrivalDate}`;
+  const selectedDriversCount=selectedDriverIds.length+externalDriverNames.length;
+  function addExternalDriver(){
+    const name=externalDriverName.trim().replace(/\s+/g," ");
+    if(!name)return setMsg("Digite o nome do motorista.");
+    if(selectedDriversCount>=3)return setMsg("É permitido associar no máximo 3 motoristas à viagem.");
+    if(externalDriverNames.some(item=>item.toLocaleLowerCase("pt-BR")===name.toLocaleLowerCase("pt-BR"))||drivers.some(item=>item.name.toLocaleLowerCase("pt-BR")===name.toLocaleLowerCase("pt-BR")))return setMsg("Esse motorista já está associado ou já existe na lista.");
+    setExternalDriverNames(items=>[...items,name]);
+    setExternalDriverName("");
+    setMsg(`${name} foi incluído apenas nesta viagem, sem acesso ao app.`);
+  }
   function currentConflicts() {
     const currentTrips = trips.filter(overlapping);
     const vehicleBusy = currentTrips.some((trip) => trip.vehicleId === Number(car));
@@ -147,9 +163,9 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     event.preventDefault();
     if (!datesConfirmed) return setMsg("Confirme carro e datas antes de salvar a viagem.");
     const messages: string[] = [];
-    if (editing === null && selectedDriverIds.length === 1)
+    if (editing === null && selectedDriversCount === 1)
       messages.push(
-        `Você selecionou apenas ${driverName(selectedDriverIds[0])}. Confirma que será o único motorista desta viagem?`,
+        `Você selecionou apenas ${driverName(selectedDriverIds[0])||externalDriverNames[0]}. Confirma que será o único motorista desta viagem?`,
       );
     const { vehicleBusy, exactDuplicate, busyDriverIds } = currentConflicts();
     if (vehicleBusy && !acceptedConflicts.includes(vehicleConflictKey))
@@ -194,6 +210,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
           totalKm: Number(totalKm),
           totalValueCents,
           associatedUserIds: selectedDriverIds,
+          externalDriverNames,
           paymentStatus,
           outstandingCents,
           allowConflicts,
@@ -233,6 +250,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     setSelectedDriverIds(
       trip.userIds.filter((id) => drivers.some((driver) => driver.id === id)),
     );
+    setExternalDriverNames(trip.externalDriverNames||[]);
     setMsg("Editando a viagem selecionada.");
     formSectionRef.current?.scrollIntoView({
       behavior: "smooth",
@@ -353,7 +371,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                 Motoristas associados à viagem
               </legend>
               <p className="mb-3 text-base text-slate-600">
-                Selecione até 3 motoristas. Adm e Gerência são associados
+                Selecione ou informe até 3 motoristas. Adm e Gerência são associados
                 automaticamente.
               </p>
               {drivers.length === 0 ? (
@@ -372,7 +390,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                         checked={selectedDriverIds.includes(user.id)}
                         disabled={
                           !selectedDriverIds.includes(user.id) &&
-                          selectedDriverIds.length >= 3
+                          selectedDriversCount >= 3
                         }
                         onChange={(event) =>
                           setSelectedDriverIds((ids) =>
@@ -388,6 +406,15 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                   ))}
                 </div>
               )}
+              <div className="mt-4 rounded-xl border-2 border-dashed border-[#096a9b] bg-[#eaf6fa] p-4">
+                <p className="text-lg font-bold text-[#075579]">Motorista não está na lista?</p>
+                <p className="mt-1 text-base text-slate-600">Inclua somente o nome para esta viagem. Isso não cria usuário, senha ou acesso ao app.</p>
+                <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+                  <input value={externalDriverName} onChange={(event)=>setExternalDriverName(event.target.value)} onKeyDown={(event)=>{if(event.key==="Enter"){event.preventDefault();addExternalDriver();}}} disabled={selectedDriversCount>=3} placeholder="Nome do motorista" className="h-12 min-w-0 flex-1 rounded-lg border bg-white px-3 text-lg disabled:bg-slate-100"/>
+                  <button type="button" onClick={addExternalDriver} disabled={selectedDriversCount>=3} className="min-h-12 rounded-lg bg-[#096a9b] px-4 py-2 text-lg font-bold text-white disabled:opacity-50">Adicionar nome</button>
+                </div>
+                {externalDriverNames.length>0&&<div className="mt-3 flex flex-wrap gap-2">{externalDriverNames.map(name=><span key={name} className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-2 text-base font-bold text-[#102b43]">{name}<button type="button" onClick={()=>setExternalDriverNames(items=>items.filter(item=>item!==name))} aria-label={`Remover ${name}`} className="grid h-6 w-6 place-items-center rounded-full bg-red-100 text-lg text-[#b3262b]">×</button></span>)}</div>}
+              </div>
             </fieldset>
             <div className="flex gap-3">
               <button className="h-14 flex-1 rounded-xl bg-[#178045] text-xl font-bold text-white">
@@ -480,16 +507,17 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
           ) : (
             <div className="space-y-4">
               {trips.map((trip) => {
-                const names = trip.userIds
+                const names = [...trip.userIds
                   .filter((id) => drivers.some((driver) => driver.id === id))
                   .map(driverName)
-                  .filter(Boolean);
+                  .filter(Boolean),...(trip.externalDriverNames||[])];
                 const status = tripStatus(trip.requestStatus);
                 return (
                   <article
                     key={trip.id}
                     className="rounded-2xl bg-white p-5 shadow-sm"
                   >
+                    <p className="inline-flex rounded-full bg-[#102b43] px-3 py-1 text-base font-extrabold text-white">Controle: {trip.controlNumber||`V-${String(trip.id).padStart(6,"0")}`}</p>
                     <p className="text-xl font-bold">{trip.vehicleLabel}</p>
                     <p className="mt-1 text-lg">
                       {formatDate(trip.departureDate)} até{" "}

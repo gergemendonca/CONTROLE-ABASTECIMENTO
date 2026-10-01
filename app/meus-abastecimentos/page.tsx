@@ -2,7 +2,7 @@
 
 import {useEffect,useState} from 'react';
 
-type Record={id:number;vehicleLabel:string;driver:string;route?:string|null;odometer:number;amountCents:number;createdAt:string;items:{kind:string;quantity:number;amountCents:number}[]};
+type Record={id:number;controlNumber?:string;vehicleLabel:string;driver:string;route?:string|null;odometer:number;amountCents:number;createdAt:string;items:{kind:string;quantity:number;amountCents:number}[]};
 const money=(value:number)=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(value/100);
 const date=(value:string)=>new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short',timeZone:'America/Bahia'}).format(new Date(value));
 

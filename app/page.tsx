@@ -8,7 +8,7 @@ import {AlertCircle, CircleCheckBig, FilePlus2, List, Power, Settings} from 'luc
 type Named={id:number;label?:string;name?:string};
 type Driver=Named&{source?:'usuario'|'freelancer'};
 type Item={kind:string;quantity:string;amount:string};
-type Record={id:number;vehicleId:number;vehicleLabel:string;driverId:number|null;driver:string;tripId:number|null;odometer:number;amountCents:number;createdAt:string;route?:string|null;items:{kind:string;quantity:number;amountCents:number}[]};
+type Record={id:number;controlNumber?:string;vehicleId:number;vehicleLabel:string;driverId:number|null;driver:string;tripId:number|null;odometer:number;amountCents:number;createdAt:string;route?:string|null;items:{kind:string;quantity:number;amountCents:number}[]};
 const types=['Gasolina','Diesel','ARLA 32','Diversos'];
 const blank=():Item=>({kind:'',quantity:'',amount:''});
 const num=(v:string)=>Number(v.replace(',','.'));

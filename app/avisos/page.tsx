@@ -2,7 +2,7 @@
 import {useEffect,useState} from 'react';
 
 type Notice={id:number;title:string;message:string;href:string;readAt:string|null;createdAt:string};
-type Request={id:number;status:'pending'|'authorized';departureDate:string;arrivalDate:string;vehicleLabel:string;route:string;requestedBy:string;createdAt:string;authorizedBy:string;authorizedAt:string|null};
+type Request={id:number;status:'pending'|'authorized';controlNumber?:string;departureDate:string;arrivalDate:string;vehicleLabel:string;route:string;requestedBy:string;createdAt:string;authorizedBy:string;authorizedAt:string|null};
 type Item={notice:Notice;request?:Request};
 const requestId=(href:string)=>{const value=new URLSearchParams(href.split('?')[1]||'').get('pedido');return value?Number(value):NaN};
 const today=()=>{const parts=new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Bahia',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());const value=(type:string)=>parts.find(part=>part.type===type)?.value||'';return `${value('year')}-${value('month')}-${value('day')}`};

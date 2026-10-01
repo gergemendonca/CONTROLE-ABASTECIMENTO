@@ -1,5 +1,6 @@
 import {env} from 'cloudflare:workers';
 import {isAdmin} from '../../admin-auth';
+import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
 
 export const dynamic='force-dynamic';
 
@@ -16,7 +17,7 @@ async function ensureClientPaidColumn(){
 export async function GET(req:Request){
  if(!await isAdmin(req))return Response.json({error:'Apenas o administrador pode gerar relatórios.'},{status:403});
  try{
-  await ensureClientPaidColumn();
+  await ensureClientPaidColumn();await ensureTripControl();
   const url=new URL(req.url);
   const today=new Date().toISOString().slice(0,10);
   const firstOfMonth=`${today.slice(0,7)}-01`;
@@ -27,7 +28,7 @@ export async function GET(req:Request){
    SELECT
     f.id,f.vehicle_id AS vehicleId,v.label AS vehicleLabel,f.driver,f.driver_id AS driverId,
     f.trip_id AS tripId,f.created_at AS createdAt,f.liters,f.amount_cents AS amountCents,
-    COALESCE(t.route,'Roteiro não informado') AS route,
+    COALESCE(t.route,'Roteiro não informado') AS route,${controlSql('t')},
     COALESCE(t.total_km,0) AS totalKm,COALESCE(t.total_value_cents,0) AS totalValueCents,
     COALESCE(fr.payment_status,'') AS paymentStatus,COALESCE(fr.outstanding_cents,0) AS outstandingCents,COALESCE(fr.client_paid,0) AS clientPaid
    FROM fueling f

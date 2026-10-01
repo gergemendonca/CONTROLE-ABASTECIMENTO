@@ -2,7 +2,7 @@
 
 import {useEffect,useState} from 'react';
 
-type Fueling={id:number;vehicleLabel:string;route:string;driver:string;createdAt:string;amountCents:number;liters:number;launchedBy:string;authorizedBy:string;authorizedAt:string|null};
+type Fueling={id:number;controlNumber?:string;vehicleLabel:string;route:string;driver:string;createdAt:string;amountCents:number;liters:number;launchedBy:string;authorizedBy:string;authorizedAt:string|null};
 const money=(value:number)=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(value/100);
 const dateTime=(value:string)=>new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short',timeZone:'America/Bahia'}).format(new Date(value));
 

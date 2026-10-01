@@ -1,3 +1,12 @@
-import { env } from 'cloudflare:workers';
+import {env} from 'cloudflare:workers';
 import {isAdmin} from '../admin-auth';
-export async function GET(req:Request){if(!await isAdmin(req))return Response.json({error:'Acesso restrito.'},{status:403});try{const trips=await env.DB!.prepare("SELECT t.id,t.vehicle_id AS vehicleId,v.label AS vehicleLabel,COALESCE(t.departure_date,t.travel_date) AS departureDate,COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,t.route FROM trips t JOIN vehicles v ON v.id=t.vehicle_id WHERE COALESCE(t.arrival_date,t.travel_date)>=date('now') ORDER BY departureDate ASC,t.id ASC").all();return Response.json({trips:trips.results})}catch{return Response.json({error:'Não foi possível carregar as viagens pendentes.'},{status:503})}}
+import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
+
+export async function GET(req:Request){
+ if(!await isAdmin(req))return Response.json({error:'Acesso restrito.'},{status:403});
+ try{
+  await ensureTripControl();
+  const trips=await env.DB!.prepare(`SELECT t.id,t.vehicle_id AS vehicleId,${controlSql('t')},v.label AS vehicleLabel,COALESCE(t.departure_date,t.travel_date) AS departureDate,COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,t.route FROM trips t JOIN vehicles v ON v.id=t.vehicle_id WHERE COALESCE(t.arrival_date,t.travel_date)>=date('now') ORDER BY departureDate ASC,t.id ASC`).all();
+  return Response.json({trips:trips.results});
+ }catch{return Response.json({error:'Não foi possível carregar as viagens pendentes.'},{status:503})}
+}

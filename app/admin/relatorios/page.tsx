@@ -3,7 +3,7 @@
 import {useEffect,useMemo,useState} from 'react';
 import {BarChart3,Car,CalendarDays,Download,Mail,Printer,Share2,UserRound} from 'lucide-react';
 
-type RecordItem={id:number;vehicleId:number;vehicleLabel:string;driver:string;driverId:number|null;tripId:number|null;createdAt:string;liters:number;amountCents:number;route:string;totalKm:number;totalValueCents:number;paymentStatus:string;outstandingCents:number;clientPaid:number};
+type RecordItem={id:number;controlNumber?:string;vehicleId:number;vehicleLabel:string;driver:string;driverId:number|null;tripId:number|null;createdAt:string;liters:number;amountCents:number;route:string;totalKm:number;totalValueCents:number;paymentStatus:string;outstandingCents:number;clientPaid:number};
 type Report={from:string;to:string;generatedAt:string;records:RecordItem[]};
 type Kind='carro'|'motorista'|'mes'|'semana'|'total';
 const money=(value:number)=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(value/100);

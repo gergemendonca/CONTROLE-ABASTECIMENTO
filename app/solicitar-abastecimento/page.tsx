@@ -1,7 +1,7 @@
 'use client';
 import {useEffect,useState} from 'react';
 
-type Trip={id:number;vehicleLabel:string;departureDate:string;arrivalDate:string;route:string};
+type Trip={id:number;controlNumber?:string;vehicleLabel:string;departureDate:string;arrivalDate:string;route:string};
 const formatDate=(date:string)=>date.split('-').reverse().join('/');
 
 export default function SolicitarAbastecimento(){
