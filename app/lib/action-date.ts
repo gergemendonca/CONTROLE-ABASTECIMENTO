@@ -1,6 +1,8 @@
 export function actionDate(value:unknown){
  if(typeof value!=='string'||!value.trim())return null;
- const normalized=value.trim().replace(' ','T');
+ const raw=value.trim();
+ const brazilian=raw.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:[ T](\d{2}):(\d{2}))?$/);
+ const normalized=brazilian?`${brazilian[3]}-${brazilian[2]}-${brazilian[1]}T${brazilian[4]||'00'}:${brazilian[5]||'00'}`:raw.replace(' ','T');
  const parsed=new Date(normalized);
  if(!Number.isFinite(parsed.getTime())||parsed.getTime()>Date.now())return undefined;
  return parsed.toISOString();
