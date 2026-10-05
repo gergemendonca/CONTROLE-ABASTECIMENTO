@@ -1,6 +1,6 @@
 'use client';
 import {useEffect,useState} from 'react';
-type Item={id:number;tripId:number;status:string;controlNumber?:string;vehicleLabel:string;route:string;liters:number;routeKm:number;paymentStatus:'total'|'parcial'|'nao_pago';outstandingCents:number|null;totalValueCents:number|null;requestedBy:string;createdAt:string;authorizedBy:string;authorizedAt:string|null;fueledAt:string|null};
+type Item={id:number;tripId:number;status:string;controlNumber?:string;retroactive?:number;vehicleLabel:string;route:string;liters:number;routeKm:number;paymentStatus:'total'|'parcial'|'nao_pago';outstandingCents:number|null;totalValueCents:number|null;requestedBy:string;createdAt:string;authorizedBy:string;authorizedAt:string|null;fueledAt:string|null};
 const money=(value:number)=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(value/100);
 const date=(value:string)=>new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short',timeZone:'America/Bahia'}).format(new Date(value));
 const payment=(status:Item['paymentStatus'])=>status==='total'?{icon:'✓',text:'Totalmente paga',className:'bg-green-50 text-[#178045]'}:status==='parcial'?{icon:'?',text:'Parcialmente paga',className:'bg-amber-50 text-[#a16207]'}:{icon:'×',text:'Não paga',className:'bg-red-50 text-[#b3262b]'};

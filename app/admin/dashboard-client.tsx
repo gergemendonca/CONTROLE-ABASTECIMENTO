@@ -4,6 +4,8 @@ const cards=[
   {label:'Nova viagem',icon:'🚚',color:'bg-[#1677d8] text-white',href:'/admin/viagens/nova'},
   {label:'Listar viagens',icon:'▤',color:'bg-[#7441c8] text-white',href:'/admin/viagens'},
   {label:'Solicitar abastecimento',icon:'⛽',color:'bg-[#0b7184] text-white',href:'/solicitar-abastecimento?origem=adm'},
+  {label:'Solicitar retroativo',icon:'↶',color:'bg-[#8a5a12] text-white',href:'/solicitar-abastecimento?origem=adm&retroativo=1'},
+  {label:'Lançar retroativo',icon:'↶',color:'bg-[#6b3fa0] text-white',href:'/admin/lancar-abastecimento-retroativo'},
   {label:'AUTORIZAR',icon:'✓',color:'bg-[#c9272c] text-white',href:'/pedidos?status=pending',prominent:true},
   {label:'Pendências',icon:'!',color:'bg-[#f5b51b] text-[#2c2509]',href:'/pedidos?status=pending'},
   {label:'Autorizados',icon:'✓',color:'bg-[#188145] text-white',href:'/pedidos?status=authorized'},

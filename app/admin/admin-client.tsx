@@ -14,6 +14,7 @@ type Trip = {
   controlNumber?: string;
   userIds: number[];
   requestStatus?: "missing" | "pending" | "authorized" | "fueled";
+  hasLateActivity?: number;
   paymentStatus?: "total" | "parcial" | "nao_pago";
   outstandingCents?: number;
   externalDriverNames?: string[];
@@ -520,6 +521,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                     className="rounded-2xl bg-white p-5 shadow-sm"
                   >
                     <p className="inline-flex rounded-full bg-[#102b43] px-3 py-1 text-base font-extrabold text-white">Controle: {trip.controlNumber||`V-${String(trip.id).padStart(6,"0")}`}</p>
+                    {Number(trip.hasLateActivity)===1&&<p className="mt-3 inline-flex items-center gap-2 rounded-xl border-2 border-amber-500 bg-amber-100 px-3 py-2 text-base font-extrabold text-amber-950"><span className="text-xl" aria-hidden="true">⚠</span>MOVIMENTAÇÃO FORA DO PRAZO</p>}
                     <p className="text-xl font-bold">{trip.vehicleLabel}</p>
                     <p className="mt-1 text-lg">
                       {formatDate(trip.departureDate)} até{" "}
