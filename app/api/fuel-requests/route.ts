@@ -6,14 +6,19 @@ import {ensureTripAudit,recordTripAudit} from '@/app/lib/trip-audit';
 type Item={tripId:number;liters:number;routeKm:number;paymentStatus:'total'|'parcial'|'nao_pago';outstandingCents:number;clientPaid?:boolean};
 const paymentOk=(value:string)=>value==='total'||value==='parcial'||value==='nao_pago';
 const today=()=>{const parts=new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Bahia',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());const field=(name:string)=>parts.find(part=>part.type===name)?.value||'';return `${field('year')}-${field('month')}-${field('day')}`};
-async function notify(userIds:number[],title:string,message:string,href:string){const ids=[...new Set(userIds)].filter(Number.isSafeInteger);if(ids.length)await env.DB!.batch(ids.map(userId=>env.DB!.prepare('INSERT INTO app_notifications (user_id,title,message,href,created_at) VALUES (?,?,?,?,?)').bind(userId,title,message,href,new Date().toISOString())))}
+async function notify(userIds:number[],title:string,message:string,href:string){
+ const ids=[...new Set(userIds)].filter(Number.isSafeInteger);
+ if(!ids.length)return;
+ // O pedido já salvo não pode ser desfeito apenas porque algum aviso falhou.
+ try{await env.DB!.batch(ids.map(userId=>env.DB!.prepare('INSERT INTO app_notifications (user_id,title,message,href,created_at) VALUES (?,?,?,?,?)').bind(userId,title,message,href,new Date().toISOString())))}catch{}
+}
 async function ensureAuditNames(){const columns=await env.DB!.prepare('PRAGMA table_info(fuel_requests)').all<{name:string}>();if(!columns.results.some(column=>column.name==='requested_by_name'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN requested_by_name text').run();if(!columns.results.some(column=>column.name==='authorized_by_name'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN authorized_by_name text').run();if(!columns.results.some(column=>column.name==='client_paid'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN client_paid integer DEFAULT 0 NOT NULL').run();if(!columns.results.some(column=>column.name==='retroactive'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN retroactive integer DEFAULT 0 NOT NULL').run();if(!columns.results.some(column=>column.name==='registered_at'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN registered_at text').run();}
 
 export async function POST(req:Request){
  const access=await requireRole(req,'solicitante');
  if(!access.user)return Response.json({error:access.error},{status:403});
  try{
-  await ensureAuditNames();await ensureTripControl();await ensureTripAudit();
+  await ensureAuditNames();await ensureTripControl();
   const {requests}=await req.json() as {requests?:Item[]};
   const management=isManagementUser(access.user);
   if(!Array.isArray(requests)||requests.length===0)return Response.json({error:'Selecione ao menos uma viagem.'},{status:400});
@@ -33,8 +38,9 @@ export async function POST(req:Request){
    const existing=await env.DB!.prepare('SELECT id FROM fuel_requests WHERE trip_id=? AND status=\'pending\' LIMIT 1').bind(item.tripId).first();
    if(existing)return Response.json({error:'Esta viagem já possui um pedido pendente de autorização.'},{status:409});
    const row=await env.DB!.prepare("INSERT INTO fuel_requests (trip_id,requested_by,requested_by_name,liters,route_km,payment_status,outstanding_cents,client_paid,retroactive,status,created_at,registered_at) VALUES (?,?,?,?,?,?,?,?,?,'pending',?,?) RETURNING id").bind(item.tripId,access.user.bootstrap?null:access.user.id,access.user.name,item.liters,item.routeKm,item.paymentStatus,item.outstandingCents,item.clientPaid?1:0,isRetroactive?1:0,now,now).first<{id:number}>();
-   if(row)created.push(row.id);
-   if(isRetroactive)await recordTripAudit({tripId:item.tripId,action:'pedido_criado',actorName:access.user.name,effectiveAt:now,registeredAt:now,retroactive:true});
+   if(!row)return Response.json({error:'Não foi possível confirmar a criação do pedido.'},{status:503});
+   created.push(row.id);
+   if(isRetroactive)try{await ensureTripAudit();await recordTripAudit({tripId:item.tripId,action:'pedido_criado',actorName:access.user.name,effectiveAt:now,registeredAt:now,retroactive:true})}catch{}
    const associated=await env.DB!.prepare('SELECT user_id AS id FROM trip_users WHERE trip_id=?').bind(item.tripId).all<{id:number}>();
    const management=await env.DB!.prepare("SELECT id FROM app_users WHERE active=1 AND group_name='gerencia'").all<{id:number}>();
    const authorizers=await env.DB!.prepare("SELECT id FROM app_users WHERE active=1 AND (roles LIKE '%\"autorizador\"%' OR roles LIKE '%\"admin\"%')").all<{id:number}>();

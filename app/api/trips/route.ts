@@ -62,7 +62,7 @@ export async function POST(req:Request){
  const session=await getSession(req);
  if(!isManagementUser(session)||session?.passwordChangeRequired)return Response.json({error:'Apenas usuários dos grupos Adm ou Gerência podem lançar viagens.'},{status:403});
  try{
-  await ensureExternalDrivers();await ensureTripControl();await ensureTripAudit();
+  await ensureExternalDrivers();await ensureTripControl();
   const input=await req.json() as TripInput;
   if(!valid(input))return Response.json({error:'Confira veículo, datas, quilometragem, valor total, roteiro e até três motoristas.'},{status:400});
   const selected=[...new Set(input.associatedUserIds||[])],guests=externalNames(input);
@@ -73,7 +73,11 @@ export async function POST(req:Request){
   const automatic=await env.DB!.prepare("SELECT id FROM app_users WHERE active=1 AND group_name IN ('adm','gerencia')").all<{id:number}>();
   const userIds=[...new Set([...selected,...automatic.results.map(user=>user.id)])];
   if(trip)await env.DB!.batch([...userIds.map(userId=>env.DB!.prepare('INSERT OR IGNORE INTO trip_users (trip_id,user_id) VALUES (?,?)').bind(trip.id,userId)),...guests.map(name=>env.DB!.prepare('INSERT OR IGNORE INTO trip_external_drivers (trip_id,name) VALUES (?,?)').bind(trip.id,name))]);
-  if(trip){const now=new Date().toISOString(),retroactive=input.departureDate<today();await recordTripAudit({tripId:trip.id,action:'viagem_cadastrada',actorName:session.name,effectiveAt:input.departureDate+'T12:00:00.000Z',registeredAt:now,retroactive});}
+  if(trip&&input.departureDate<today()){
+   // A auditoria é complementar: a viagem já foi salva e não pode receber
+   // uma mensagem de erro por causa dela.
+   try{await ensureTripAudit();await recordTripAudit({tripId:trip.id,action:'viagem_cadastrada',actorName:session.name,effectiveAt:input.departureDate+'T12:00:00.000Z',registeredAt:new Date().toISOString(),retroactive:true})}catch{}
+  }
   return Response.json({trip});
  }catch{return Response.json({error:'Não foi possível salvar a viagem.'},{status:503})}
 }
