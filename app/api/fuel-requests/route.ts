@@ -37,14 +37,17 @@ export async function POST(req:Request){
    if(item.paymentStatus==='nao_pago'&&item.outstandingCents!==total)return Response.json({error:'Em viagem não paga, o valor em aberto deve ser exatamente igual ao valor total da viagem.'},{status:400});
    const existing=await env.DB!.prepare('SELECT id FROM fuel_requests WHERE trip_id=? AND status=\'pending\' LIMIT 1').bind(item.tripId).first();
    if(existing)return Response.json({error:'Esta viagem já possui um pedido pendente de autorização.'},{status:409});
-   const row=await env.DB!.prepare("INSERT INTO fuel_requests (trip_id,requested_by,requested_by_name,liters,route_km,payment_status,outstanding_cents,client_paid,retroactive,status,created_at,registered_at) VALUES (?,?,?,?,?,?,?,?,?,'pending',?,?) RETURNING id").bind(item.tripId,access.user.bootstrap?null:access.user.id,access.user.name,item.liters,item.routeKm,item.paymentStatus,item.outstandingCents,item.clientPaid?1:0,isRetroactive?1:0,now,now).first<{id:number}>();
-   if(!row)return Response.json({error:'Não foi possível confirmar a criação do pedido.'},{status:503});
-   created.push(row.id);
+   const inserted=await env.DB!.prepare("INSERT INTO fuel_requests (trip_id,requested_by,requested_by_name,liters,route_km,payment_status,outstanding_cents,client_paid,retroactive,status,created_at,registered_at) VALUES (?,?,?,?,?,?,?,?,?,'pending',?,?)").bind(item.tripId,access.user.bootstrap?null:access.user.id,access.user.name,item.liters,item.routeKm,item.paymentStatus,item.outstandingCents,item.clientPaid?1:0,isRetroactive?1:0,now,now).run();
+   const requestId=Number((inserted as any).meta?.last_row_id);
+   if(!Number.isSafeInteger(requestId)||requestId<=0)return Response.json({error:'Não foi possível confirmar a criação do pedido.'},{status:503});
+   created.push(requestId);
    if(isRetroactive)try{await ensureTripAudit();await recordTripAudit({tripId:item.tripId,action:'pedido_criado',actorName:access.user.name,effectiveAt:now,registeredAt:now,retroactive:true})}catch{}
-   const associated=await env.DB!.prepare('SELECT user_id AS id FROM trip_users WHERE trip_id=?').bind(item.tripId).all<{id:number}>();
-   const management=await env.DB!.prepare("SELECT id FROM app_users WHERE active=1 AND group_name='gerencia'").all<{id:number}>();
-   const authorizers=await env.DB!.prepare("SELECT id FROM app_users WHERE active=1 AND (roles LIKE '%\"autorizador\"%' OR roles LIKE '%\"admin\"%')").all<{id:number}>();
-   await notify([...associated.results.map(x=>x.id),...management.results.map(x=>x.id),...authorizers.results.map(x=>x.id)],isRetroactive?'Pedido retroativo de abastecimento':'Novo pedido de abastecimento',`${trip.controlNumber} — pedido ${isRetroactive?'retroativo ':''}feito por ${access.user.name} e pendente de autorização.`,`/autorizacoes?pedido=${row?.id}`);
+   try{
+    const associated=await env.DB!.prepare('SELECT user_id AS id FROM trip_users WHERE trip_id=?').bind(item.tripId).all<{id:number}>();
+    const managers=await env.DB!.prepare("SELECT id FROM app_users WHERE active=1 AND group_name='gerencia'").all<{id:number}>();
+    const authorizers=await env.DB!.prepare("SELECT id FROM app_users WHERE active=1 AND (roles LIKE '%\"autorizador\"%' OR roles LIKE '%\"admin\"%')").all<{id:number}>();
+    await notify([...associated.results.map(x=>x.id),...managers.results.map(x=>x.id),...authorizers.results.map(x=>x.id)],isRetroactive?'Pedido retroativo de abastecimento':'Novo pedido de abastecimento',`${trip.controlNumber} — pedido ${isRetroactive?'retroativo ':''}feito por ${access.user.name} e pendente de autorização.`,`/autorizacoes?pedido=${requestId}`);
+   }catch{}
   }
   return Response.json({ids:created,requestedBy:access.user.name});
  }catch{return Response.json({error:'Não foi possível criar o pedido de abastecimento.'},{status:503})}
