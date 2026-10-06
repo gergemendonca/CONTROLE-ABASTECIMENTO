@@ -3,13 +3,14 @@ import {getSession,type SessionUser} from '../admin-auth';
 import {validate} from './common';
 import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
 import {actionDate} from '@/app/lib/action-date';
+import {ensureTripAudit,recordTripAudit} from '@/app/lib/trip-audit';
 
 export const dynamic='force-dynamic';
 const fields=`f.id,f.vehicle_id AS vehicleId,v.label AS vehicleLabel,f.driver_id AS driverId,f.driver,f.odometer,f.amount_cents AS amountCents,f.created_at AS createdAt,f.liters,f.trip_id AS tripId,f.fuel_request_id AS fuelRequestId,f.launched_by AS launchedById,COALESCE(f.launched_by_name,'Não informado') AS launchedBy,COALESCE(f.direct_launch,0) AS directLaunch,COALESCE(f.retroactive,0) AS retroactive,COALESCE(f.authorization_observation,'') AS authorizationObservation,${controlSql('t')},COALESCE(t.route,(SELECT oldTrip.route FROM trips oldTrip WHERE oldTrip.vehicle_id=f.vehicle_id AND date(f.created_at) BETWEEN COALESCE(oldTrip.departure_date,oldTrip.travel_date) AND COALESCE(oldTrip.arrival_date,oldTrip.travel_date) ORDER BY COALESCE(oldTrip.departure_date,oldTrip.travel_date) DESC LIMIT 1)) AS route`;
 
 async function linkedRequest(tripId:number){return env.DB!.prepare("SELECT fr.id FROM fuel_requests fr WHERE fr.trip_id=? AND fr.status='authorized' AND (fr.created_at>=datetime('now','-5 days') OR COALESCE(fr.retroactive,0)=1) AND NOT EXISTS (SELECT 1 FROM fueling used WHERE used.fuel_request_id=fr.id) ORDER BY fr.authorized_at DESC,fr.id DESC LIMIT 1").bind(tripId).first<{id:number}>();}
 async function ensureLaunchAudit(){const columns=await env.DB!.prepare('PRAGMA table_info(fueling)').all<{name:string}>();if(!columns.results.some(column=>column.name==='launched_by'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN launched_by integer').run();if(!columns.results.some(column=>column.name==='launched_by_name'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN launched_by_name text').run();if(!columns.results.some(column=>column.name==='direct_launch'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN direct_launch integer DEFAULT 0 NOT NULL').run();if(!columns.results.some(column=>column.name==='authorization_observation'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN authorization_observation text').run();if(!columns.results.some(column=>column.name==='retroactive'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN retroactive integer DEFAULT 0 NOT NULL').run();if(!columns.results.some(column=>column.name==='registered_at'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN registered_at text').run();}
-function canChooseDriver(user:SessionUser){return !!user.bootstrap||user.roles.includes('admin')||user.groupName==='adm'||user.groupName==='gerencia';}
+function canChooseDriver(user:SessionUser){return !!user.bootstrap||user.groupName==='adm'||user.groupName==='gerencia';}
 async function canLaunchFor(user:SessionUser,driverId:number){if(canChooseDriver(user))return true;if(user.groupName!=='motorista'||!user.roles.includes('solicitante'))return false;return !!await env.DB!.prepare('SELECT id FROM drivers WHERE id=? AND lower(name)=lower(?) LIMIT 1').bind(driverId,user.name).first();}
 async function canUseTrip(user:SessionUser,tripId:number){
  if(canChooseDriver(user))return true;
@@ -28,18 +29,22 @@ export async function POST(req:Request){
   if(selectedDate&&!canChooseDriver(session))return Response.json({error:'Somente Adm ou Gerência pode informar uma data retroativa.'},{status:403});
   const data=await validate(input,canChooseDriver(session));
   if(!data)return Response.json({error:'Escolha uma viagem em período válido ou com autorização disponível nos últimos 5 dias e confira veículo, motorista, KM, itens, quantidades e valores.'},{status:400});
-  const retroactive=canChooseDriver(session)&&(data.arrivalDate<today()||!!selectedDate);
+  const tripIsPast=data.arrivalDate<today();
+  if(tripIsPast&&!canChooseDriver(session))return Response.json({error:'Somente Adm ou Gerência pode lançar abastecimento de viagem fora do prazo.'},{status:403});
+  if(tripIsPast&&!selectedDate)return Response.json({error:'Informe a data e hora reais do abastecimento retroativo no formato DDMMAAAA HHMM.'},{status:400});
+  const retroactive=canChooseDriver(session)&&(tripIsPast||!!selectedDate);
   const alreadyFueled=await env.DB!.prepare('SELECT id FROM fueling WHERE trip_id=? LIMIT 1').bind(data.tripId).first();
   if(alreadyFueled)return Response.json({error:'Esta viagem já possui um abastecimento realizado e não pode receber um novo lançamento.'},{status:409});
   if(!await canLaunchFor(session,data.driverId))return Response.json({error:'Você só pode lançar abastecimento em seu próprio nome.'},{status:403});
   if(!await canUseTrip(session,data.tripId))return Response.json({error:'Esta viagem não está associada ao seu usuário.'},{status:403});
   const last=await env.DB!.prepare('SELECT MAX(odometer) AS odometer FROM fueling WHERE vehicle_id=?').bind(data.vehicleId).first<{odometer:number|null}>();
   if(last?.odometer!==null&&last?.odometer!==undefined&&data.odometer<last.odometer)return Response.json({error:`A quilometragem informada é inferior à última registrada para este carro (${last.odometer.toLocaleString('pt-BR')} km). Revise o painel do veículo.`},{status:409});
-  await ensureLaunchAudit();
+  await ensureLaunchAudit();await ensureTripAudit();
   const duplicate=await env.DB!.prepare('SELECT id FROM fueling WHERE vehicle_id=? AND odometer=? LIMIT 1').bind(data.vehicleId,data.odometer).first();
   if(duplicate)return Response.json({error:'Já existe um abastecimento deste veículo com esta quilometragem. Confira o KM informado.'},{status:409});
   const request=await linkedRequest(data.tripId),directLaunch=!request,id=Date.now()*1000+Math.floor(Math.random()*1000),registeredAt=new Date().toISOString(),date=selectedDate||registeredAt,observation=retroactive?`Lançamento fora do prazo feito por ${session.name} em ${new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short',timeZone:'America/Bahia'}).format(new Date(registeredAt))}.`:directLaunch?`Lançamento direto pela área de usuário, sem autorização prévia formal. Registrado por ${session.name} em ${new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short',timeZone:'America/Bahia'}).format(new Date(registeredAt))}.`:null;
   await env.DB!.batch([env.DB!.prepare('INSERT INTO fueling (id,vehicle_id,driver_id,driver,liters,odometer,amount_cents,trip_id,fuel_request_id,launched_by,launched_by_name,direct_launch,authorization_observation,retroactive,created_at,registered_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').bind(id,data.vehicleId,data.driverId,data.driverName,data.liters,data.odometer,data.total,data.tripId,request?.id||null,session.bootstrap?null:session.id,session.name,directLaunch?1:0,observation,retroactive?1:0,date,registeredAt),...data.items.map(item=>env.DB!.prepare('INSERT INTO fueling_items (fueling_id,kind,quantity,amount_cents) VALUES (?,?,?,?)').bind(id,item.kind,item.quantity,item.amountCents))]);
+  if(retroactive)await recordTripAudit({tripId:data.tripId,action:'abastecimento_lancado',actorName:session.name,effectiveAt:date,registeredAt,retroactive:true});
   return Response.json({id,createdAt:date,registeredAt,launchedBy:session.name,driver:data.driverName,directLaunch,retroactive,authorizationObservation:observation},{status:201});
  }catch{return Response.json({error:'Falha ao salvar. Tente novamente.'},{status:503})}
 }

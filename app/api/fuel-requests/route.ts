@@ -1,7 +1,7 @@
 import {env} from 'cloudflare:workers';
-import {isAdmin,requireRole} from '../admin-auth';
+import {isManagementUser,requireRole} from '../admin-auth';
 import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
-import {actionDate} from '@/app/lib/action-date';
+import {ensureTripAudit,recordTripAudit} from '@/app/lib/trip-audit';
 
 type Item={tripId:number;liters:number;routeKm:number;paymentStatus:'total'|'parcial'|'nao_pago';outstandingCents:number;clientPaid?:boolean};
 const paymentOk=(value:string)=>value==='total'||value==='parcial'||value==='nao_pago';
@@ -13,18 +13,17 @@ export async function POST(req:Request){
  const access=await requireRole(req,'solicitante');
  if(!access.user)return Response.json({error:access.error},{status:403});
  try{
-  await ensureAuditNames();await ensureTripControl();
-  const {requests,effectiveAt}=await req.json() as {requests?:Item[];effectiveAt?:string};
-  const management=await isAdmin(req);
-  const selectedDate=actionDate(effectiveAt);
-  if(selectedDate===undefined)return Response.json({error:'A data retroativa é inválida ou está no futuro.'},{status:400});
-  if(selectedDate&&!management)return Response.json({error:'Somente Adm ou Gerência pode informar uma data retroativa.'},{status:403});
+  await ensureAuditNames();await ensureTripControl();await ensureTripAudit();
+  const {requests}=await req.json() as {requests?:Item[]};
+  const management=isManagementUser(access.user);
   if(!Array.isArray(requests)||requests.length===0)return Response.json({error:'Selecione ao menos uma viagem.'},{status:400});
   for(const item of requests)if(!Number.isSafeInteger(item.tripId)||!Number.isFinite(item.liters)||item.liters<=0||!Number.isSafeInteger(item.routeKm)||item.routeKm<0||!paymentOk(item.paymentStatus)||!Number.isSafeInteger(item.outstandingCents)||item.outstandingCents<0)return Response.json({error:'Confira litros, KM e pagamento de cada viagem.'},{status:400});
   const now=new Date().toISOString(),created:number[]=[];
   for(const item of requests){
    const trip=await env.DB!.prepare(`SELECT COALESCE(arrival_date,travel_date) AS arrivalDate,total_value_cents AS totalValueCents,${controlSql('trips')} FROM trips WHERE id=?`).bind(item.tripId).first<{arrivalDate:string;totalValueCents:number;controlNumber:string}>();
-   const isRetroactive=!!trip&&(trip.arrivalDate<today()||!!selectedDate);
+   // O pedido sempre é registrado no momento atual. A retroatividade vem da
+   // data da própria viagem, e não de uma data informada nesta etapa.
+   const isRetroactive=!!trip&&trip.arrivalDate<today();
    if(!trip||(!management&&isRetroactive))return Response.json({error:'Não é possível solicitar autorização porque o período desta viagem já foi encerrado.'},{status:409});
    const total=Number(trip.totalValueCents||0);
    if(total<=0)return Response.json({error:'Esta viagem não possui valor total válido. Edite a viagem antes de solicitar autorização.'},{status:400});
@@ -33,8 +32,9 @@ export async function POST(req:Request){
    if(item.paymentStatus==='nao_pago'&&item.outstandingCents!==total)return Response.json({error:'Em viagem não paga, o valor em aberto deve ser exatamente igual ao valor total da viagem.'},{status:400});
    const existing=await env.DB!.prepare('SELECT id FROM fuel_requests WHERE trip_id=? AND status=\'pending\' LIMIT 1').bind(item.tripId).first();
    if(existing)return Response.json({error:'Esta viagem já possui um pedido pendente de autorização.'},{status:409});
-   const row=await env.DB!.prepare("INSERT INTO fuel_requests (trip_id,requested_by,requested_by_name,liters,route_km,payment_status,outstanding_cents,client_paid,retroactive,status,created_at,registered_at) VALUES (?,?,?,?,?,?,?,?,?,'pending',?,?) RETURNING id").bind(item.tripId,access.user.bootstrap?null:access.user.id,access.user.name,item.liters,item.routeKm,item.paymentStatus,item.outstandingCents,item.clientPaid?1:0,isRetroactive?1:0,selectedDate||now,now).first<{id:number}>();
+   const row=await env.DB!.prepare("INSERT INTO fuel_requests (trip_id,requested_by,requested_by_name,liters,route_km,payment_status,outstanding_cents,client_paid,retroactive,status,created_at,registered_at) VALUES (?,?,?,?,?,?,?,?,?,'pending',?,?) RETURNING id").bind(item.tripId,access.user.bootstrap?null:access.user.id,access.user.name,item.liters,item.routeKm,item.paymentStatus,item.outstandingCents,item.clientPaid?1:0,isRetroactive?1:0,now,now).first<{id:number}>();
    if(row)created.push(row.id);
+   if(isRetroactive)await recordTripAudit({tripId:item.tripId,action:'pedido_criado',actorName:access.user.name,effectiveAt:now,registeredAt:now,retroactive:true});
    const associated=await env.DB!.prepare('SELECT user_id AS id FROM trip_users WHERE trip_id=?').bind(item.tripId).all<{id:number}>();
    const management=await env.DB!.prepare("SELECT id FROM app_users WHERE active=1 AND group_name='gerencia'").all<{id:number}>();
    const authorizers=await env.DB!.prepare("SELECT id FROM app_users WHERE active=1 AND (roles LIKE '%\"autorizador\"%' OR roles LIKE '%\"admin\"%')").all<{id:number}>();
@@ -49,10 +49,10 @@ export async function GET(req:Request){
  if(!access.user)return Response.json({error:access.error},{status:403});
  await ensureAuditNames();await ensureTripControl();
  const params=new URL(req.url).searchParams,requestedStatus=params.get('status'),status=requestedStatus==='pending'||requestedStatus==='authorized'?requestedStatus:null,requestId=Number(params.get('pedido')),byId=Number.isSafeInteger(requestId)&&requestId>0,tripId=Number(params.get('tripId')),byTrip=Number.isSafeInteger(tripId)&&tripId>0;
- const canViewFinancial=access.user.roles.includes('admin')||access.user.roles.includes('autorizador')||access.user.groupName==='gerencia';
- let where=status==='authorized'?" WHERE f.status='authorized'":" WHERE (f.status='pending' OR NOT EXISTS (SELECT 1 FROM fueling completed WHERE completed.fuel_request_id=f.id)) AND (f.status='authorized' OR COALESCE(t.arrival_date,t.travel_date)>=? OR COALESCE(f.retroactive,0)=1)",binds:unknown[]=status==='authorized'?[]:[today()];
+ const management=isManagementUser(access.user),canViewFinancial=management||access.user.roles.includes('autorizador');
+ let where=status==='authorized'?" WHERE f.status='authorized'":" WHERE (f.status='pending' OR NOT EXISTS (SELECT 1 FROM fueling completed WHERE completed.fuel_request_id=f.id)) AND (f.status='authorized' OR COALESCE(t.arrival_date,t.travel_date)>=? OR COALESCE(f.retroactive,0)=1 OR ?=1)",binds:unknown[]=status==='authorized'?[]:[today(),management?1:0];
  if(byId){where+=' AND f.id=?';binds.push(requestId)}else if(byTrip){where+=' AND f.trip_id=?';binds.push(tripId)}else if(status&&status!=='authorized'){where+=' AND f.status=?';binds.push(status)}
- const q=`SELECT f.id,f.trip_id AS tripId,${controlSql('t')},f.liters,f.route_km AS routeKm,f.payment_status AS paymentStatus,f.outstanding_cents AS outstandingCents,COALESCE(f.client_paid,0) AS clientPaid,COALESCE(f.retroactive,0) AS retroactive,f.status,f.created_at AS createdAt,COALESCE(f.registered_at,f.created_at) AS registeredAt,f.authorized_at AS authorizedAt,(SELECT completed.created_at FROM fueling completed WHERE completed.fuel_request_id=f.id ORDER BY completed.created_at DESC LIMIT 1) AS fueledAt,v.label AS vehicleLabel,t.route,t.departure_date AS departureDate,t.arrival_date AS arrivalDate,COALESCE(t.total_value_cents,0) AS totalValueCents,COALESCE(f.requested_by_name,u.name,'Não informado') AS requestedBy,COALESCE(f.authorized_by_name,a.name,CASE WHEN f.status='authorized' THEN 'George Mendonça' END,'Não informado') AS authorizedBy FROM fuel_requests f JOIN trips t ON t.id=f.trip_id JOIN vehicles v ON v.id=t.vehicle_id LEFT JOIN app_users u ON u.id=f.requested_by LEFT JOIN app_users a ON a.id=f.authorized_by${where} ORDER BY CASE f.status WHEN 'pending' THEN 0 ELSE 1 END,f.created_at DESC`;
+ const q=`SELECT f.id,f.trip_id AS tripId,${controlSql('t')},f.liters,f.route_km AS routeKm,f.payment_status AS paymentStatus,f.outstanding_cents AS outstandingCents,COALESCE(f.client_paid,0) AS clientPaid,COALESCE(f.retroactive,0) AS retroactive,f.status,f.created_at AS createdAt,COALESCE(f.registered_at,f.created_at) AS registeredAt,f.authorized_at AS authorizedAt,(SELECT completed.created_at FROM fueling completed WHERE completed.fuel_request_id=f.id ORDER BY completed.created_at DESC LIMIT 1) AS fueledAt,v.label AS vehicleLabel,t.route,t.departure_date AS departureDate,t.arrival_date AS arrivalDate,COALESCE(t.total_value_cents,0) AS totalValueCents,COALESCE(f.requested_by_name,u.name,'Não informado') AS requestedBy,COALESCE(f.authorized_by_name,a.name,'Não informado') AS authorizedBy FROM fuel_requests f JOIN trips t ON t.id=f.trip_id JOIN vehicles v ON v.id=t.vehicle_id LEFT JOIN app_users u ON u.id=f.requested_by LEFT JOIN app_users a ON a.id=f.authorized_by${where} ORDER BY CASE f.status WHEN 'pending' THEN 0 ELSE 1 END,f.created_at DESC`;
  const rows=await env.DB!.prepare(q).bind(...binds).all();
  return Response.json({requests:(rows.results||[]).map((item:any)=>canViewFinancial?item:{...item,totalValueCents:null,paymentStatus:null,outstandingCents:null}),canViewFinancial});
 }

@@ -4,7 +4,7 @@ import {useEffect,useState} from 'react';
 import DashboardClient from './dashboard-client';
 
 type Session={name:string;username:string;roles:string[];groupName?:'motorista'|'adm'|'gerencia';passwordChangeRequired?:boolean};
-const canOpenAdm=(user:Session|null)=>!!user&&(user.roles.includes('admin')||user.groupName==='adm'||user.groupName==='gerencia');
+const canOpenAdm=(user:Session|null)=>!!user&&(user.groupName==='adm'||user.groupName==='gerencia');
 
 export default function Admin(){
  const [user,setUser]=useState<Session|null>(null),[checking,setChecking]=useState(true),[username,setUsername]=useState(''),[password,setPassword]=useState(''),[error,setError]=useState('');

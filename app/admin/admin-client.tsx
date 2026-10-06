@@ -15,6 +15,7 @@ type Trip = {
   userIds: number[];
   requestStatus?: "missing" | "pending" | "authorized" | "fueled";
   hasLateActivity?: number;
+  lateActivities?: {action:string;actorName:string;effectiveAt:string;registeredAt:string}[];
   paymentStatus?: "total" | "parcial" | "nao_pago";
   outstandingCents?: number;
   externalDriverNames?: string[];
@@ -36,6 +37,8 @@ const tripStatus = (status?: Trip["requestStatus"]) => {
     return { icon: "!", label: "Pendente de autorização", className: "border-red-300 bg-red-50 text-red-700" };
   return { icon: "●", label: "Falta solicitar", className: "border-amber-300 bg-amber-50 text-amber-800" };
 };
+const lateActionLabel=(action:string)=>action==='viagem_cadastrada'?'Viagem cadastrada':action==='viagem_editada'?'Viagem editada':action==='pedido_criado'?'Pedido criado':action==='autorizacao_registrada'?'Autorização registrada':'Abastecimento lançado';
+const dateTime=(value:string)=>new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short',timeZone:'America/Bahia'}).format(new Date(value));
 
 export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }) {
   const today = new Date().toISOString().slice(0, 10),
@@ -522,6 +525,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                   >
                     <p className="inline-flex rounded-full bg-[#102b43] px-3 py-1 text-base font-extrabold text-white">Controle: {trip.controlNumber||`V-${String(trip.id).padStart(6,"0")}`}</p>
                     {Number(trip.hasLateActivity)===1&&<p className="mt-3 inline-flex items-center gap-2 rounded-xl border-2 border-amber-500 bg-amber-100 px-3 py-2 text-base font-extrabold text-amber-950"><span className="text-xl" aria-hidden="true">⚠</span>MOVIMENTAÇÃO FORA DO PRAZO</p>}
+                    {(trip.lateActivities||[]).map((activity,index)=><p key={index} className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-950">⚠ {lateActionLabel(activity.action)} por {activity.actorName}. Data do fato: {dateTime(activity.effectiveAt)} · registrado no app: {dateTime(activity.registeredAt)}.</p>)}
                     <p className="text-xl font-bold">{trip.vehicleLabel}</p>
                     <p className="mt-1 text-lg">
                       {formatDate(trip.departureDate)} até{" "}

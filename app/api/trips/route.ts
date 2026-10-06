@@ -1,9 +1,11 @@
 import {env} from 'cloudflare:workers';
-import {isAdmin,requireRole} from '../admin-auth';
+import {getSession,isManagementUser,requireRole} from '../admin-auth';
 import {controlNumber,controlSql,ensureTripControl} from '@/app/lib/trip-control';
+import {ensureTripAudit,lateActivitySql,parseLateActivities,recordTripAudit} from '@/app/lib/trip-audit';
 
 export const dynamic='force-dynamic';
 const dateOk=(value:string)=>/^\d{4}-\d{2}-\d{2}$/.test(value);
+const today=()=>{const parts=new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Bahia',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());const field=(name:string)=>parts.find(part=>part.type===name)?.value||'';return `${field('year')}-${field('month')}-${field('day')}`};
 type TripInput={vehicleId:number;departureDate:string;arrivalDate:string;route:string;totalKm:number;totalValueCents:number;associatedUserIds?:number[];externalDriverNames?:string[];allowConflicts?:boolean};
 const rangeConflict=(vehicleId:number,departureDate:string,arrivalDate:string)=>env.DB!.prepare('SELECT id FROM trips WHERE vehicle_id=? AND COALESCE(departure_date,travel_date)<=? AND COALESCE(arrival_date,travel_date)>=? LIMIT 1').bind(vehicleId,arrivalDate,departureDate).first();
 // Alguns lançamentos antigos podem estar associados somente à solicitação.
@@ -26,12 +28,12 @@ export async function GET(req:Request){
  try{
   const url=new URL(req.url),vehicleId=Number(url.searchParams.get('vehicleId')),date=url.searchParams.get('date'),from=url.searchParams.get('from'),to=url.searchParams.get('to'),available=url.searchParams.get('available')==='1',launch=url.searchParams.get('launch')==='1';
   const headers={'Cache-Control':'no-store, max-age=0'};
-  await ensureExternalDrivers();await ensureTripControl();await ensureMovementFlags();
+  await ensureExternalDrivers();await ensureTripControl();await ensureMovementFlags();await ensureTripAudit();
   const compactFields=`id,vehicle_id AS vehicleId,${controlSql('trips')},COALESCE(departure_date,travel_date) AS departureDate,COALESCE(arrival_date,travel_date) AS arrivalDate,route,total_km AS totalKm,COALESCE(total_value_cents,0) AS totalValueCents,COALESCE((SELECT GROUP_CONCAT(au.name) FROM trip_users tu JOIN app_users au ON au.id=tu.user_id WHERE tu.trip_id=trips.id AND au.group_name='motorista'),'') AS associatedDriverNames,COALESCE((SELECT GROUP_CONCAT(name,'|') FROM trip_external_drivers WHERE trip_id=trips.id),'') AS externalDriverNames`;
   if(vehicleId&&launch){
    const access=await requireRole(req,'solicitante','autorizador','avisado');
    if(!access.user)return Response.json({error:access.error},{status:403,headers});
-   const management=access.user.bootstrap||access.user.roles.includes('admin')||access.user.groupName==='adm'||access.user.groupName==='gerencia';
+   const management=isManagementUser(access.user);
    const scope=management?'':` AND EXISTS (SELECT 1 FROM trip_users mine WHERE mine.trip_id=trips.id AND mine.user_id=?)`;
    const sql=`SELECT ${compactFields} FROM trips WHERE vehicle_id=? AND ${noFuelingForTrip('trips')} AND (${management?'1=1':"COALESCE(arrival_date,travel_date)>=date('now') OR EXISTS (SELECT 1 FROM fuel_requests fr WHERE fr.trip_id=trips.id AND fr.status='authorized' AND fr.created_at>=datetime('now','-5 days') AND NOT EXISTS (SELECT 1 FROM fueling used WHERE used.fuel_request_id=fr.id))"})${scope} ORDER BY COALESCE(departure_date,travel_date) DESC,id DESC`;
    const rows=management?await env.DB!.prepare(sql).bind(vehicleId).all():await env.DB!.prepare(sql).bind(vehicleId,access.user.id).all();
@@ -47,20 +49,20 @@ export async function GET(req:Request){
   }
   const access=await requireRole(req,'solicitante','autorizador','avisado');
   if(!access.user)return Response.json({error:access.error},{status:403,headers});
-  const admin=access.user.roles.includes('admin');
-  const management=access.user.bootstrap||admin||access.user.groupName==='adm'||access.user.groupName==='gerencia';
+  const management=isManagementUser(access.user);
   const requestedFilter=available?` WHERE ${management?'1=1':"COALESCE(t.arrival_date,t.travel_date)>=date('now')"} AND ${noFuelingForTrip('t')} AND NOT EXISTS (SELECT 1 FROM fuel_requests fr WHERE fr.trip_id=t.id)`:'';
-  const fields=`t.id,t.vehicle_id AS vehicleId,v.label AS vehicleLabel,${controlSql('t')},COALESCE(t.departure_date,t.travel_date) AS departureDate,COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,t.route,t.total_km AS totalKm,COALESCE(t.total_value_cents,0) AS totalValueCents,CASE WHEN EXISTS (SELECT 1 FROM fueling completed WHERE completed.trip_id=t.id OR EXISTS (SELECT 1 FROM fuel_requests linked WHERE linked.id=completed.fuel_request_id AND linked.trip_id=t.id)) THEN 'fueled' WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1)='pending' THEN 'pending' WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1)='authorized' THEN 'authorized' ELSE 'missing' END AS requestStatus,CASE WHEN EXISTS (SELECT 1 FROM fuel_requests late_request WHERE late_request.trip_id=t.id AND COALESCE(late_request.retroactive,0)=1) OR EXISTS (SELECT 1 FROM fueling late_fueling WHERE (late_fueling.trip_id=t.id OR EXISTS (SELECT 1 FROM fuel_requests linked WHERE linked.id=late_fueling.fuel_request_id AND linked.trip_id=t.id)) AND COALESCE(late_fueling.retroactive,0)=1) THEN 1 ELSE 0 END AS hasLateActivity,COALESCE((SELECT GROUP_CONCAT(name,'|') FROM trip_external_drivers WHERE trip_id=t.id),'') AS externalDriverNames`;
+  const fields=`t.id,t.vehicle_id AS vehicleId,v.label AS vehicleLabel,${controlSql('t')},COALESCE(t.departure_date,t.travel_date) AS departureDate,COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,t.route,t.total_km AS totalKm,COALESCE(t.total_value_cents,0) AS totalValueCents,CASE WHEN EXISTS (SELECT 1 FROM fueling completed WHERE completed.trip_id=t.id OR EXISTS (SELECT 1 FROM fuel_requests linked WHERE linked.id=completed.fuel_request_id AND linked.trip_id=t.id)) THEN 'fueled' WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1)='pending' THEN 'pending' WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1)='authorized' THEN 'authorized' ELSE 'missing' END AS requestStatus,CASE WHEN EXISTS (SELECT 1 FROM trip_audit late_audit WHERE late_audit.trip_id=t.id AND late_audit.retroactive=1) THEN 1 ELSE 0 END AS hasLateActivity,${lateActivitySql('t')},COALESCE((SELECT GROUP_CONCAT(name,'|') FROM trip_external_drivers WHERE trip_id=t.id),'') AS externalDriverNames`;
   const sql=management?`SELECT ${fields},COALESCE(GROUP_CONCAT(tu.user_id), '') AS userIds FROM trips t JOIN vehicles v ON v.id=t.vehicle_id LEFT JOIN trip_users tu ON tu.trip_id=t.id${requestedFilter} GROUP BY t.id ORDER BY t.id DESC LIMIT 100`:`SELECT ${fields},COALESCE(GROUP_CONCAT(tu2.user_id), '') AS userIds FROM trips t JOIN vehicles v ON v.id=t.vehicle_id JOIN trip_users mine ON mine.trip_id=t.id AND mine.user_id=? LEFT JOIN trip_users tu2 ON tu2.trip_id=t.id${available?` WHERE COALESCE(t.arrival_date,t.travel_date)>=date('now') AND ${noFuelingForTrip('t')} AND NOT EXISTS (SELECT 1 FROM fuel_requests fr WHERE fr.trip_id=t.id)`:""} GROUP BY t.id ORDER BY t.id DESC LIMIT 100`;
   const trips=management?await env.DB!.prepare(sql).all():await env.DB!.prepare(sql).bind(access.user.id).all();
-  return Response.json({trips:(trips.results||[]).map((trip:any)=>({...trip,userIds:trip.userIds?String(trip.userIds).split(',').map(Number):[],externalDriverNames:trip.externalDriverNames?String(trip.externalDriverNames).split('|'):[]}))},{headers});
+  return Response.json({trips:(trips.results||[]).map((trip:any)=>({...trip,userIds:trip.userIds?String(trip.userIds).split(',').map(Number):[],externalDriverNames:trip.externalDriverNames?String(trip.externalDriverNames).split('|'):[],lateActivities:parseLateActivities(trip.lateActivities)}))},{headers});
  }catch{return Response.json({error:'Não foi possível consultar as viagens.'},{status:503,headers:{'Cache-Control':'no-store, max-age=0'}})}
 }
 
 export async function POST(req:Request){
- if(!await isAdmin(req))return Response.json({error:'Apenas o administrador pode lançar viagens.'},{status:403});
+ const session=await getSession(req);
+ if(!isManagementUser(session)||session?.passwordChangeRequired)return Response.json({error:'Apenas usuários dos grupos Adm ou Gerência podem lançar viagens.'},{status:403});
  try{
-  await ensureExternalDrivers();await ensureTripControl();
+  await ensureExternalDrivers();await ensureTripControl();await ensureTripAudit();
   const input=await req.json() as TripInput;
   if(!valid(input))return Response.json({error:'Confira veículo, datas, quilometragem, valor total, roteiro e até três motoristas.'},{status:400});
   const selected=[...new Set(input.associatedUserIds||[])],guests=externalNames(input);
@@ -71,6 +73,7 @@ export async function POST(req:Request){
   const automatic=await env.DB!.prepare("SELECT id FROM app_users WHERE active=1 AND group_name IN ('adm','gerencia')").all<{id:number}>();
   const userIds=[...new Set([...selected,...automatic.results.map(user=>user.id)])];
   if(trip)await env.DB!.batch([...userIds.map(userId=>env.DB!.prepare('INSERT OR IGNORE INTO trip_users (trip_id,user_id) VALUES (?,?)').bind(trip.id,userId)),...guests.map(name=>env.DB!.prepare('INSERT OR IGNORE INTO trip_external_drivers (trip_id,name) VALUES (?,?)').bind(trip.id,name))]);
+  if(trip){const now=new Date().toISOString(),retroactive=input.departureDate<today();await recordTripAudit({tripId:trip.id,action:'viagem_cadastrada',actorName:session.name,effectiveAt:input.departureDate+'T12:00:00.000Z',registeredAt:now,retroactive});}
   return Response.json({trip});
  }catch{return Response.json({error:'Não foi possível salvar a viagem.'},{status:503})}
 }
