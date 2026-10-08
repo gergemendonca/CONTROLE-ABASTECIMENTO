@@ -39,6 +39,10 @@ export const trips=sqliteTable('trips',{
  totalKm:integer('total_km').notNull().default(0),
  totalValueCents:integer('total_value_cents').notNull().default(0),
  controlNumber:text('control_number'),
+ canceledAt:text('canceled_at'),
+ canceledBy:integer('canceled_by').references(()=>appUsers.id),
+ canceledByName:text('canceled_by_name'),
+ cancelReason:text('cancel_reason'),
 });
 
 export const whatsappContacts=sqliteTable('whatsapp_contacts',{

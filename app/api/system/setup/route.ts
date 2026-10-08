@@ -21,6 +21,10 @@ export async function POST(req:Request){
   const tripColumns=await env.DB!.prepare('PRAGMA table_info(trips)').all<{name:string}>();
   if(!tripColumns.results.some(column=>column.name==='total_km'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN total_km integer DEFAULT 0 NOT NULL').run();
   if(!tripColumns.results.some(column=>column.name==='total_value_cents'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN total_value_cents integer DEFAULT 0 NOT NULL').run();
+  if(!tripColumns.results.some(column=>column.name==='canceled_at'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN canceled_at text').run();
+  if(!tripColumns.results.some(column=>column.name==='canceled_by'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN canceled_by integer').run();
+  if(!tripColumns.results.some(column=>column.name==='canceled_by_name'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN canceled_by_name text').run();
+  if(!tripColumns.results.some(column=>column.name==='cancel_reason'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN cancel_reason text').run();
   const fuelingColumns=await env.DB!.prepare('PRAGMA table_info(fueling)').all<{name:string}>();
   if(!fuelingColumns.results.some(column=>column.name==='trip_id'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN trip_id integer').run();
   if(!fuelingColumns.results.some(column=>column.name==='fuel_request_id'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN fuel_request_id integer').run();

@@ -1,6 +1,7 @@
 import {env} from 'cloudflare:workers';
 import {isAdmin} from '../../admin-auth';
 import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
+import {activeTrip,ensureTripCancellation} from '@/app/lib/trip-cancellation';
 
 export const dynamic='force-dynamic';
 
@@ -17,13 +18,18 @@ async function ensureClientPaidColumn(){
 export async function GET(req:Request){
  if(!await isAdmin(req))return Response.json({error:'Apenas o administrador pode gerar relatórios.'},{status:403});
  try{
-  await ensureClientPaidColumn();await ensureTripControl();
+  await ensureClientPaidColumn();await ensureTripControl();await ensureTripCancellation();
   const url=new URL(req.url);
   const today=new Date().toISOString().slice(0,10);
   const firstOfMonth=`${today.slice(0,7)}-01`;
   const from=isoDate(url.searchParams.get('from'),firstOfMonth);
   const to=isoDate(url.searchParams.get('to'),today);
+  const canceled=url.searchParams.get('kind')==='canceladas';
   if(from>to)return Response.json({error:'A data inicial não pode ser posterior à data final.'},{status:400});
+  if(canceled){
+   const rows=await env.DB!.prepare(`SELECT t.id,${controlSql('t')},v.label AS vehicleLabel,t.route,COALESCE(t.departure_date,t.travel_date) AS departureDate,COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,COALESCE(t.total_km,0) AS totalKm,COALESCE(t.total_value_cents,0) AS totalValueCents,COALESCE(t.cancel_reason,'Motivo não informado') AS cancelReason,COALESCE(t.canceled_by_name,'Não informado') AS canceledBy,COALESCE(t.canceled_at,'') AS canceledAt FROM trips t JOIN vehicles v ON v.id=t.vehicle_id WHERE COALESCE(t.canceled_at,'')<>'' AND date(t.canceled_at,'-3 hours') BETWEEN ? AND ? ORDER BY t.canceled_at DESC,t.id DESC`).bind(from,to).all();
+   return Response.json({from,to,generatedAt:new Date().toISOString(),records:[],trips:[],canceledTrips:rows.results||[]});
+  }
   const rows=await env.DB!.prepare(`
    SELECT
     f.id,f.vehicle_id AS vehicleId,v.label AS vehicleLabel,f.driver,f.driver_id AS driverId,
@@ -35,7 +41,7 @@ export async function GET(req:Request){
    JOIN vehicles v ON v.id=f.vehicle_id
    LEFT JOIN trips t ON t.id=f.trip_id
    LEFT JOIN fuel_requests fr ON fr.id=(SELECT id FROM fuel_requests q WHERE q.trip_id=f.trip_id ORDER BY q.id DESC LIMIT 1)
-   WHERE date(f.created_at,'-3 hours') BETWEEN ? AND ?
+   WHERE date(f.created_at,'-3 hours') BETWEEN ? AND ? AND (t.id IS NULL OR ${activeTrip('t')})
    ORDER BY f.created_at DESC,f.id DESC
   `).bind(from,to).all();
   // O relatório é financeiro/operacional: uma viagem só participa dele depois
@@ -50,7 +56,7 @@ export async function GET(req:Request){
          WHEN EXISTS (SELECT 1 FROM fueling completed WHERE completed.trip_id=t.id) THEN 'fueled'
          ELSE 'missing' END AS status
    FROM trips t JOIN vehicles v ON v.id=t.vehicle_id
-   WHERE EXISTS (
+   WHERE ${activeTrip('t')} AND EXISTS (
     SELECT 1 FROM fueling completed
     WHERE (completed.trip_id=t.id OR EXISTS (
       SELECT 1 FROM fuel_requests linked

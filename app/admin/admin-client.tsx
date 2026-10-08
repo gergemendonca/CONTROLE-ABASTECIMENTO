@@ -61,6 +61,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     [externalDriverName,setExternalDriverName]=useState(""),
     [editing, setEditing] = useState<number | null>(null),
     [confirmId, setConfirmId] = useState<number | null>(null),
+    [cancelReason,setCancelReason]=useState(""),
     [confirmation, setConfirmation] = useState<Confirmation | null>(null),
     [liveConflict, setLiveConflict] = useState<LiveConflict | null>(null),
     [acceptedConflicts, setAcceptedConflicts] = useState<string[]>([]),
@@ -108,6 +109,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     setExternalDriverName("");
     setEditing(null);
     setConfirmId(null);
+    setCancelReason("");
     setConfirmation(null);
     setLiveConflict(null);
     setAcceptedConflicts([]);
@@ -264,15 +266,19 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     });
   }
   async function remove(trip: Trip) {
+    if(cancelReason.trim().length<3)return setMsg("Informe o motivo do cancelamento antes de confirmar.");
     const response = await fetch(`/api/trips/${trip.id}`, {
         method: "DELETE",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({reason:cancelReason.trim()}),
         cache: "no-store",
       }),
       data: any = await response.json().catch(() => ({}));
     if (!response.ok) return setMsg(data.error || "Não foi possível apagar.");
     setTrips((items) => items.filter((item) => item.id !== trip.id));
     setConfirmId(null);
-    setMsg("Viagem apagada e removida da lista.");
+    setCancelReason("");
+    setMsg("Viagem cancelada e removida da lista operacional.");
   }
   return (
     <main className="min-h-screen bg-[#f3f6f9] p-5">
@@ -505,7 +511,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
           </div>
         )}
         {mode !== "new" && <section className="mt-7">
-          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-2xl font-bold">Viagens cadastradas</h2><p className="mt-1 text-base text-slate-600">A mais recentemente cadastrada aparece no topo.</p></div><button type="button" onClick={() => window.location.assign("/admin/viagens/nova")} className="inline-flex min-h-12 w-full shrink-0 items-center justify-center whitespace-nowrap rounded-xl bg-[#1677d8] px-4 py-3 text-center text-base font-bold leading-tight text-white sm:w-auto sm:px-5 sm:text-lg">+ Incluir nova viagem</button></div>
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-2xl font-bold">Viagens cadastradas</h2><p className="mt-1 text-base text-slate-600">A mais recentemente cadastrada aparece no topo.</p></div><div className="grid gap-2 sm:flex"><button type="button" onClick={() => window.location.assign("/admin/viagens/canceladas")} className="inline-flex min-h-12 items-center justify-center whitespace-nowrap rounded-xl border-2 border-[#b3262b] bg-white px-4 py-3 text-center text-base font-bold leading-tight text-[#b3262b] sm:px-5 sm:text-lg">Canceladas</button><button type="button" onClick={() => window.location.assign("/admin/viagens/nova")} className="inline-flex min-h-12 items-center justify-center whitespace-nowrap rounded-xl bg-[#1677d8] px-4 py-3 text-center text-base font-bold leading-tight text-white sm:px-5 sm:text-lg">+ Incluir nova viagem</button></div></div>
           {trips.length === 0 ? (
             <p className="rounded-2xl bg-white p-5 text-lg">
               Nenhuma viagem salva.
@@ -553,19 +559,20 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                     {confirmId === trip.id ? (
                       <div className="mt-5 rounded-xl border-2 border-[#b3262b] bg-red-50 p-4">
                         <p className="text-lg font-bold text-[#7f1d1d]">
-                          Deseja apagar esta viagem?
+                          Cancelar esta viagem?
                         </p>
+                        <label className="mt-4 block text-base font-bold text-slate-800">Motivo do cancelamento<textarea autoFocus value={cancelReason} onChange={event=>setCancelReason(event.target.value)} maxLength={500} placeholder="Ex.: cliente cancelou o roteiro" className="mt-2 min-h-24 w-full rounded-xl border bg-white p-3 text-base font-normal text-slate-900"/></label>
                         <div className="mt-4 flex gap-3">
                           <button
                             type="button"
                             onClick={() => void remove(trip)}
                             className="h-12 rounded-xl bg-[#b3262b] px-5 text-lg font-bold text-white"
                           >
-                            Confirmar apagar
+                            Confirmar cancelamento
                           </button>
                           <button
                             type="button"
-                            onClick={() => setConfirmId(null)}
+                            onClick={() => {setConfirmId(null);setCancelReason("");}}
                             className="h-12 rounded-xl border px-5 text-lg font-bold"
                           >
                             Cancelar
@@ -586,7 +593,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                           onClick={() => setConfirmId(trip.id)}
                           className="h-12 rounded-xl bg-[#b3262b] px-5 text-lg font-bold text-white"
                         >
-                          Apagar
+                          Cancelar viagem
                         </button>
                       </div>
                     )}
