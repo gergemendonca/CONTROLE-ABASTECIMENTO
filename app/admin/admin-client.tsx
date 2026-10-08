@@ -48,6 +48,8 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     [trips, setTrips] = useState<Trip[]>([]),
     [users, setUsers] = useState<AppUser[]>([]);
   const [car, setCar] = useState(""),
+    [lastOdometer,setLastOdometer]=useState<number|null>(null),
+    [odometerMessage,setOdometerMessage]=useState(""),
     [departureDate, setDepartureDate] = useState(today),
     [arrivalDate, setArrivalDate] = useState(today),
     [route, setRoute] = useState(""),
@@ -91,6 +93,23 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     );
   }, []);
   useEffect(()=>{const id=Number(new URLSearchParams(window.location.search).get("edit"));if(mode!=="new"||queryEditLoaded.current||!Number.isSafeInteger(id)||users.length===0)return;queryEditLoaded.current=true;void fetch(`/api/trips/${id}/full-edit`,{cache:"no-store"}).then(async response=>{const data:any=await response.json();if(!response.ok)throw Error(data.error);edit(data.trip)}).catch((error:Error)=>setMsg(error.message||"Não foi possível abrir a viagem para edição."));},[mode,users]);
+  useEffect(()=>{
+    const controller=new AbortController();
+    setLastOdometer(null);
+    if(!car){setOdometerMessage("");return ()=>controller.abort();}
+    setOdometerMessage("Consultando última quilometragem...");
+    void (async()=>{
+      try{
+        const response=await fetch(`/api/fueling/last-odometer?vehicleId=${encodeURIComponent(car)}`,{cache:"no-store",signal:controller.signal});
+        const data=await response.json();
+        if(!response.ok)throw Error(data.error||"Não foi possível consultar a quilometragem.");
+        if(controller.signal.aborted)return;
+        setLastOdometer(typeof data.odometer==="number"?data.odometer:null);
+        setOdometerMessage(data.odometer===null?"Este carro ainda não possui quilometragem registrada.":"");
+      }catch(error){if(!controller.signal.aborted)setOdometerMessage(error instanceof Error?error.message:"Não foi possível consultar a quilometragem.");}
+    })();
+    return ()=>controller.abort();
+  },[car]);
   const drivers = users.filter((user) => user.groupName === "motorista");
   const driverName = (id: number) =>
     drivers.find((user) => user.id === id)?.name || "";
@@ -310,6 +329,10 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                 ))}
               </select>
             </label>
+            {car&&<div role="status" aria-live="polite" className="rounded-2xl border border-sky-200 bg-sky-50 p-4">
+              <p className="text-base font-bold text-[#075579]">Última quilometragem salva do carro</p>
+              {lastOdometer!==null?<><p className="mt-1 text-2xl font-extrabold tabular-nums text-[#102b43]">{lastOdometer.toLocaleString("pt-BR")} km</p><p className="mt-2 text-sm text-slate-600">Obtida dos abastecimentos lançados. A quilometragem total da viagem é preenchida separadamente.</p></>:<p className="mt-2 text-base text-slate-600">{odometerMessage}</p>}
+            </div>}
             <div className="grid grid-cols-2 gap-5">
               <label className="block min-w-0 text-lg font-bold">
                 Saída
