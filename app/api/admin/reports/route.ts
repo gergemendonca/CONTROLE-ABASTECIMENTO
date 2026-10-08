@@ -38,6 +38,8 @@ export async function GET(req:Request){
    WHERE date(f.created_at,'-3 hours') BETWEEN ? AND ?
    ORDER BY f.created_at DESC,f.id DESC
   `).bind(from,to).all();
+  // O relatório é financeiro/operacional: uma viagem só participa dele depois
+  // que existir abastecimento efetivamente lançado no período escolhido.
   const trips=await env.DB!.prepare(`
    SELECT t.id,${controlSql('t')},v.label AS vehicleLabel,t.route,
     COALESCE(t.departure_date,t.travel_date) AS departureDate,
@@ -48,7 +50,14 @@ export async function GET(req:Request){
          WHEN EXISTS (SELECT 1 FROM fueling completed WHERE completed.trip_id=t.id) THEN 'fueled'
          ELSE 'missing' END AS status
    FROM trips t JOIN vehicles v ON v.id=t.vehicle_id
-   WHERE COALESCE(t.arrival_date,t.travel_date)>=? AND COALESCE(t.departure_date,t.travel_date)<=?
+   WHERE EXISTS (
+    SELECT 1 FROM fueling completed
+    WHERE (completed.trip_id=t.id OR EXISTS (
+      SELECT 1 FROM fuel_requests linked
+      WHERE linked.id=completed.fuel_request_id AND linked.trip_id=t.id
+    ))
+    AND date(completed.created_at,'-3 hours') BETWEEN ? AND ?
+   )
    ORDER BY COALESCE(t.departure_date,t.travel_date) DESC,t.id DESC
   `).bind(from,to).all();
   return Response.json({from,to,generatedAt:new Date().toISOString(),records:rows.results||[],trips:trips.results||[]});
