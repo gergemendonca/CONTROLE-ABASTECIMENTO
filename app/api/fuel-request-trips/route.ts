@@ -7,7 +7,7 @@ export async function GET(req:Request){
  if(!await isAdmin(req))return Response.json({error:'Acesso restrito.'},{status:403});
  try{
   await ensureTripControl();await ensureTripCancellation();
-  const trips=await env.DB!.prepare(`SELECT t.id,t.vehicle_id AS vehicleId,${controlSql('t')},v.label AS vehicleLabel,COALESCE(t.departure_date,t.travel_date) AS departureDate,COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,t.route FROM trips t JOIN vehicles v ON v.id=t.vehicle_id WHERE ${activeTrip('t')} AND COALESCE(t.arrival_date,t.travel_date)>=date('now') ORDER BY departureDate ASC,t.id ASC`).all();
+  const trips=await env.DB!.prepare(`SELECT t.id,t.vehicle_id AS vehicleId,${controlSql('t')},v.label AS vehicleLabel,COALESCE(t.departure_date,t.travel_date) AS departureDate,COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,t.route FROM trips t JOIN vehicles v ON v.id=t.vehicle_id WHERE ${activeTrip('t')} AND COALESCE(t.fuel_canceled_at,'')='' AND COALESCE(t.arrival_date,t.travel_date)>=date('now') ORDER BY departureDate ASC,t.id ASC`).all();
   return Response.json({trips:trips.results});
  }catch{return Response.json({error:'Não foi possível carregar as viagens pendentes.'},{status:503})}
 }

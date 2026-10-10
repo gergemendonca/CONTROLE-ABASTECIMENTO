@@ -1,7 +1,8 @@
+import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
 import {clearSessionCookie,getSession,hashPassword} from '../../admin-auth';
 
-export async function PUT(req:Request){
+async function loggedPUT(req:Request){
  const user=await getSession(req);
  if(!user)return Response.json({error:'Faça login para alterar sua senha.'},{status:401});
  if(user.bootstrap)return Response.json({error:'A senha do administrador principal é configurada no Cloudflare.'},{status:403});
@@ -12,3 +13,5 @@ export async function PUT(req:Request){
   return new Response(JSON.stringify({updated:true}),{headers:{'Content-Type':'application/json','Set-Cookie':clearSessionCookie()}});
  }catch{return Response.json({error:'Não foi possível alterar sua senha.'},{status:503});}
 }
+
+export const PUT=withSystemLog(loggedPUT);

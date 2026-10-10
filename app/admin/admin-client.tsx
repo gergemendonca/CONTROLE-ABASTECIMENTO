@@ -14,6 +14,9 @@ type Trip = {
   controlNumber?: string;
   userIds: number[];
   requestStatus?: "missing" | "pending" | "authorized" | "fueled";
+  fuelCanceledAt?: string;
+  fuelCanceledBy?: string;
+  fuelCancelReason?: string;
   hasLateActivity?: number;
   lateActivities?: {action:string;actorName:string;effectiveAt:string;registeredAt:string}[];
   paymentStatus?: "total" | "parcial" | "nao_pago";
@@ -30,12 +33,12 @@ type LiveConflict = { kind: "vehicle" | "drivers" | "duplicate"; key: string; me
 const formatDate = (date: string) => date.split("-").reverse().join("/");
 const tripStatus = (status?: Trip["requestStatus"]) => {
   if (status === "fueled")
-    return { icon: "✓", label: "Abastecido", className: "border-sky-300 bg-sky-50 text-sky-800" };
+    return { icon: "✓", label: "Abastecido", className: "border-sky-400 bg-sky-100 text-sky-900", cardClass: "border-sky-400 bg-sky-100" };
   if (status === "authorized")
-    return { icon: "✓", label: "Autorizado", className: "border-emerald-300 bg-emerald-50 text-emerald-800" };
+    return { icon: "✓", label: "Autorizado", className: "border-emerald-400 bg-emerald-100 text-emerald-900", cardClass: "border-emerald-400 bg-emerald-100" };
   if (status === "pending")
-    return { icon: "!", label: "Pendente de autorização", className: "border-red-300 bg-red-50 text-red-700" };
-  return { icon: "●", label: "Falta solicitar", className: "border-amber-300 bg-amber-50 text-amber-800" };
+    return { icon: "!", label: "Aguardando liberação", className: "border-red-400 bg-red-100 text-red-900", cardClass: "border-red-400 bg-red-100" };
+  return { icon: "●", label: "Pendente de pedido · ainda não solicitado", className: "border-amber-400 bg-amber-100 text-amber-900", cardClass: "border-amber-400 bg-amber-100" };
 };
 const lateActionLabel=(action:string)=>action==='viagem_cadastrada'?'Viagem cadastrada':action==='viagem_editada'?'Viagem editada':action==='pedido_criado'?'Pedido criado':action==='autorizacao_registrada'?'Autorização registrada':'Abastecimento lançado';
 const dateTime=(value:string)=>new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short',timeZone:'America/Bahia'}).format(new Date(value));
@@ -546,15 +549,16 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                   .filter((id) => drivers.some((driver) => driver.id === id))
                   .map(driverName)
                   .filter(Boolean),...(trip.externalDriverNames||[])];
-                const status = tripStatus(trip.requestStatus);
+                const status = trip.fuelCanceledAt ? {icon:"×",label:"Abastecimento cancelado",className:"border-slate-400 bg-slate-200 text-slate-900",cardClass:"border-slate-400 bg-slate-200"} : tripStatus(trip.requestStatus);
                 return (
                   <article
                     key={trip.id}
-                    className="rounded-2xl bg-white p-5 shadow-sm"
+                    className={`rounded-2xl border-2 p-5 text-slate-900 shadow-sm ${status.cardClass}`}
                   >
                     <p className="inline-flex rounded-full bg-[#102b43] px-3 py-1 text-base font-extrabold text-white">Controle: {trip.controlNumber||`V-${String(trip.id).padStart(6,"0")}`}</p>
                     {Number(trip.hasLateActivity)===1&&<p className="mt-3 inline-flex items-center gap-2 rounded-xl border-2 border-amber-500 bg-amber-100 px-3 py-2 text-base font-extrabold text-amber-950"><span className="text-xl" aria-hidden="true">⚠</span>MOVIMENTAÇÃO FORA DO PRAZO</p>}
                     {(trip.lateActivities||[]).map((activity,index)=><p key={index} className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-950">⚠ {lateActionLabel(activity.action)} por {activity.actorName}. Data do fato: {dateTime(activity.effectiveAt)} · registrado no app: {dateTime(activity.registeredAt)}.</p>)}
+                    {trip.fuelCanceledAt&&<p className="mt-3 text-base font-semibold">Cancelado por {trip.fuelCanceledBy||"Não informado"} em {dateTime(trip.fuelCanceledAt)}. Motivo: {trip.fuelCancelReason}</p>}
                     <p className="text-xl font-bold">{trip.vehicleLabel}</p>
                     <p className="mt-1 text-lg">
                       {formatDate(trip.departureDate)} até{" "}
@@ -603,7 +607,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                         </div>
                       </div>
                     ) : (
-                      <div className="mt-5 flex gap-4">
+                      <div className="mt-5 flex flex-wrap gap-3">
                         <button
                           type="button"
                           onClick={() => window.location.assign(`/admin/viagens/nova?edit=${trip.id}&return=${encodeURIComponent('/admin/viagens')}`)}
@@ -618,6 +622,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                         >
                           Cancelar viagem
                         </button>
+                        {!trip.fuelCanceledAt&&<button type="button" onClick={async()=>{const reason=window.prompt("Cancelar abastecimento desta viagem? A viagem permanece no histórico e nos relatórios. Litros, produtos e despesas serão excluídos dos cálculos. Informe o motivo:");if(reason===null)return;if(reason.trim().length<3){setMsg("Informe um motivo com pelo menos 3 caracteres.");return;}if(!window.confirm("Confirma o cancelamento do abastecimento?"))return;try{const response=await fetch(`/api/trips/${trip.id}/cancel-fueling`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reason})});const data=await response.json();if(!response.ok)throw Error(data.error);setMsg(data.message);await load();}catch(error){setMsg(error instanceof Error?error.message:"Falha ao cancelar.");}}} className="min-h-12 rounded-xl border-2 border-red-800 bg-white px-4 py-2 text-lg font-bold text-red-800">Cancelar abastecimento</button>}
                       </div>
                     )}
                   </article>

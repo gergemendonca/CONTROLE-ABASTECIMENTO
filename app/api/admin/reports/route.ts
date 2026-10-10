@@ -41,7 +41,7 @@ export async function GET(req:Request){
    JOIN vehicles v ON v.id=f.vehicle_id
    LEFT JOIN trips t ON t.id=f.trip_id
    LEFT JOIN fuel_requests fr ON fr.id=(SELECT id FROM fuel_requests q WHERE q.trip_id=f.trip_id ORDER BY q.id DESC LIMIT 1)
-   WHERE date(f.created_at,'-3 hours') BETWEEN ? AND ? AND (t.id IS NULL OR ${activeTrip('t')})
+   WHERE date(f.created_at,'-3 hours') BETWEEN ? AND ? AND (t.id IS NULL OR (${activeTrip('t')} AND COALESCE(t.fuel_canceled_at,'')=''))
    ORDER BY f.created_at DESC,f.id DESC
   `).bind(from,to).all();
   // O relatório é financeiro/operacional: uma viagem só participa dele depois
@@ -51,21 +51,21 @@ export async function GET(req:Request){
     COALESCE(t.departure_date,t.travel_date) AS departureDate,
     COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,
     COALESCE(t.total_km,0) AS totalKm,COALESCE(t.total_value_cents,0) AS totalValueCents,
-    CASE WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1)='pending' THEN 'pending'
+    CASE WHEN COALESCE(t.fuel_canceled_at,'')<>'' THEN 'fuel_canceled' WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1)='pending' THEN 'pending'
          WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1)='authorized' THEN CASE WHEN EXISTS (SELECT 1 FROM fueling completed WHERE completed.fuel_request_id=(SELECT fr.id FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1)) THEN 'fueled' ELSE 'authorized' END
          WHEN EXISTS (SELECT 1 FROM fueling completed WHERE completed.trip_id=t.id) THEN 'fueled'
          ELSE 'missing' END AS status
    FROM trips t JOIN vehicles v ON v.id=t.vehicle_id
-   WHERE ${activeTrip('t')} AND EXISTS (
+   WHERE ${activeTrip('t')} AND (EXISTS (
     SELECT 1 FROM fueling completed
     WHERE (completed.trip_id=t.id OR EXISTS (
       SELECT 1 FROM fuel_requests linked
       WHERE linked.id=completed.fuel_request_id AND linked.trip_id=t.id
     ))
     AND date(completed.created_at,'-3 hours') BETWEEN ? AND ?
-   )
+   ) OR (COALESCE(t.fuel_canceled_at,'')<>'' AND COALESCE(t.departure_date,t.travel_date) BETWEEN ? AND ?))
    ORDER BY COALESCE(t.departure_date,t.travel_date) DESC,t.id DESC
-  `).bind(from,to).all();
+  `).bind(from,to,from,to).all();
   return Response.json({from,to,generatedAt:new Date().toISOString(),records:rows.results||[],trips:trips.results||[]});
  }catch{return Response.json({error:'Não foi possível gerar o relatório.'},{status:503});}
 }

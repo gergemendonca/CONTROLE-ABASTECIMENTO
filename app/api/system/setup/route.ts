@@ -1,7 +1,8 @@
+import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
 import {ensureUserPasswordPolicy,isAdmin} from '../../admin-auth';
 
-export async function POST(req:Request){
+async function loggedPOST(req:Request){
  if(!await isAdmin(req))return Response.json({error:'Apenas administrador.'},{status:403});
  try{
   await env.DB!.batch([
@@ -51,3 +52,5 @@ export async function POST(req:Request){
   return Response.json({ok:true,testDataCleared:!resetMarker});
  }catch{return Response.json({error:'Não foi possível preparar a atualização do banco.'},{status:503})}
 }
+
+export const POST=withSystemLog(loggedPOST);

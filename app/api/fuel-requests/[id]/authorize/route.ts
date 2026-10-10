@@ -1,3 +1,4 @@
+import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
 import {isManagementUser,requireRole} from '../../../admin-auth';
 import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
@@ -7,7 +8,7 @@ import {activeTrip,ensureTripCancellation} from '@/app/lib/trip-cancellation';
 const today=()=>{const parts=new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Bahia',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());const part=(name:string)=>parts.find(x=>x.type===name)?.value||'';return `${part('year')}-${part('month')}-${part('day')}`};
 async function ensureAuditName(){const columns=await env.DB!.prepare('PRAGMA table_info(fuel_requests)').all<{name:string}>();if(!columns.results.some(column=>column.name==='authorized_by_name'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN authorized_by_name text').run();if(!columns.results.some(column=>column.name==='authorized_registered_at'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN authorized_registered_at text').run();}
 
-export async function POST(req:Request,{params}:{params:Promise<{id:string}>}){
+async function loggedPOST(req:Request,{params}:{params:Promise<{id:string}>}){
   const access=await requireRole(req,'autorizador');
   if(!access.user)return Response.json({error:access.error},{status:403});
   try{
@@ -28,3 +29,5 @@ export async function POST(req:Request,{params}:{params:Promise<{id:string}>}){
     return Response.json({authorized:true,authorizedBy:access.user.name,authorizedAt:now});
   }catch{return Response.json({error:'Não foi possível autorizar o pedido.'},{status:503})}
 }
+
+export const POST=withSystemLog(loggedPOST);

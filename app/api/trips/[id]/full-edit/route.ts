@@ -1,3 +1,4 @@
+import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
 import {getSession,isManagementUser} from '../../../admin-auth';
 import {ensureTripAudit,recordTripAudit} from '@/app/lib/trip-audit';
@@ -17,7 +18,7 @@ export async function GET(req:Request,{params}:Context){
  try{await ensureExternalDrivers();await ensureTripCancellation();const id=Number((await params).id);if(!Number.isSafeInteger(id))return Response.json({error:'Viagem inválida.'},{status:400});const trip=await env.DB!.prepare(`SELECT t.id,t.vehicle_id AS vehicleId,v.label AS vehicleLabel,COALESCE(t.departure_date,t.travel_date) AS departureDate,COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,t.route,t.total_km AS totalKm,COALESCE(t.total_value_cents,0) AS totalValueCents,COALESCE((SELECT payment_status FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1),'nao_pago') AS paymentStatus,COALESCE((SELECT outstanding_cents FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1),COALESCE(t.total_value_cents,0)) AS outstandingCents,COALESCE((SELECT GROUP_CONCAT(user_id) FROM trip_users WHERE trip_id=t.id),'') AS userIds,COALESCE((SELECT GROUP_CONCAT(name,'|') FROM trip_external_drivers WHERE trip_id=t.id),'') AS externalDriverNames FROM trips t JOIN vehicles v ON v.id=t.vehicle_id WHERE t.id=? AND ${activeTrip('t')}`).bind(id).first<any>();if(!trip)return Response.json({error:'Viagem não encontrada ou cancelada.'},{status:404});return Response.json({trip:{...trip,userIds:trip.userIds?String(trip.userIds).split(',').map(Number):[],externalDriverNames:trip.externalDriverNames?String(trip.externalDriverNames).split('|'):[]}})}catch{return Response.json({error:'Não foi possível carregar a viagem.'},{status:503})}
 }
 
-export async function PUT(req:Request,{params}:Context){
+async function loggedPUT(req:Request,{params}:Context){
  const session=await getSession(req);if(!isManagementUser(session)||session?.passwordChangeRequired)return Response.json({error:'Apenas Adm ou Gerência pode editar a viagem.'},{status:403});
  try{
   await ensureExternalDrivers();await ensureTripAudit();await ensureTripCancellation();const id=Number((await params).id),input=await req.json() as Input;
@@ -39,3 +40,5 @@ export async function PUT(req:Request,{params}:Context){
   return Response.json({updated:true,requestUpdated:!!latestRequest});
  }catch{return Response.json({error:'Não foi possível gravar a edição da viagem.'},{status:503})}
 }
+
+export const PUT=withSystemLog(loggedPUT);

@@ -1,3 +1,4 @@
+import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
 import {getSession,type SessionUser} from '../admin-auth';
 import {validate} from './common';
@@ -20,7 +21,7 @@ const today=()=>{const parts=new Intl.DateTimeFormat('pt-BR',{timeZone:'America/
 
 export async function GET(req:Request){try{const session=await getSession(req);if(!session)return Response.json({error:'Faça login para consultar abastecimentos.'},{status:401});await ensureLaunchAudit();const last30=new URL(req.url).searchParams.get('days')==='30',management=canChooseDriver(session);let where='',binds:unknown[]=[];if(!management){where=" WHERE f.created_at>=datetime('now','-30 days') AND f.driver_id=(SELECT id FROM drivers WHERE lower(name)=lower(?) LIMIT 1)";binds=[session.name];}const sql=`SELECT ${fields} FROM fueling f JOIN vehicles v ON v.id=f.vehicle_id LEFT JOIN trips t ON t.id=f.trip_id${where} ORDER BY f.created_at DESC,f.id DESC${!management&&!last30?' LIMIT 50':''}`;const records=(await env.DB!.prepare(sql).bind(...binds).all()).results;const ids=records.map(record=>Number(record.id));const items=ids.length?(await env.DB!.prepare(`SELECT fueling_id AS fuelingId,kind,quantity,amount_cents AS amountCents FROM fueling_items WHERE fueling_id IN (${ids.map(()=>'?').join(',')}) ORDER BY id`).bind(...ids).all()).results:[];return Response.json({records:records.map(record=>({...record,items:items.filter(item=>item.fuelingId===record.id)})),allRecords:management});}catch{return Response.json({error:'Não foi possível carregar os registros.'},{status:503})}}
 
-export async function POST(req:Request){
+async function loggedPOST(req:Request){
  try{
   const session=await getSession(req);
   if(!session)return Response.json({error:'Faça login para lançar abastecimento.'},{status:401});
@@ -48,3 +49,5 @@ export async function POST(req:Request){
   return Response.json({id,createdAt:date,registeredAt,launchedBy:session.name,driver:data.driverName,directLaunch,retroactive,authorizationObservation:observation},{status:201});
  }catch{return Response.json({error:'Falha ao salvar. Tente novamente.'},{status:503})}
 }
+
+export const POST=withSystemLog(loggedPOST);

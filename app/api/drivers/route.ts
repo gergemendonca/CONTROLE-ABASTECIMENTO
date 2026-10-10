@@ -1,3 +1,4 @@
+import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
 
 export const dynamic='force-dynamic';
@@ -14,7 +15,7 @@ export async function GET(){
  }catch{return Response.json({error:'Não foi possível carregar os motoristas cadastrados.'},{status:503})}
 }
 
-export async function POST(req:Request){
+async function loggedPOST(req:Request){
  try{
   const {name,freelancer}=await req.json() as {name?:string;freelancer?:boolean};
   const clean=name?.trim();
@@ -26,3 +27,5 @@ export async function POST(req:Request){
   return Response.json({driver:{...driver,source:'freelancer'}},{status:201});
  }catch{return Response.json({error:'Não foi possível cadastrar o freelancer. Verifique se o nome já existe.'},{status:409})}
 }
+
+export const POST=withSystemLog(loggedPOST);

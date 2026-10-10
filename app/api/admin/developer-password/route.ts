@@ -1,9 +1,10 @@
+import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
 import {getSession,hashPassword} from '../../admin-auth';
 
 const developerPassword=()=>env.DEVELOPER_PASSWORD||'0815';
 
-export async function PUT(req:Request){
+async function loggedPUT(req:Request){
  const user=await getSession(req);
  if(!user?.bootstrap)return Response.json({error:'Esta área é exclusiva do administrador principal.'},{status:403});
  try{
@@ -16,3 +17,5 @@ export async function PUT(req:Request){
   return Response.json({updated:true});
  }catch{return Response.json({error:'Não foi possível redefinir a senha.'},{status:503});}
 }
+
+export const PUT=withSystemLog(loggedPUT);

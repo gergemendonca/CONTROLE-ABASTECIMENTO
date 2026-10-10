@@ -8,6 +8,9 @@ export async function ensureTripCancellation(){
  if(!names.has('canceled_by'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN canceled_by integer').run();
  if(!names.has('canceled_by_name'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN canceled_by_name text').run();
  if(!names.has('cancel_reason'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN cancel_reason text').run();
+ if(!names.has('fuel_canceled_at'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN fuel_canceled_at text').run();
+ if(!names.has('fuel_canceled_by_name'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN fuel_canceled_by_name text').run();
+ if(!names.has('fuel_cancel_reason'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN fuel_cancel_reason text').run();
 }
 
 export const activeTrip=(alias='t')=>`COALESCE(${alias}.canceled_at,'')=''`;
