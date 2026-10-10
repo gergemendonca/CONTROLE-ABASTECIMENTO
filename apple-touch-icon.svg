@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Controle de Abastecimento">
+  <rect width="512" height="512" rx="112" fill="#b91c1c"/>
+  <rect x="116" y="90" width="192" height="334" rx="28" fill="#ffffff"/>
+  <rect x="151" y="127" width="122" height="106" rx="14" fill="#b91c1c"/>
+  <path d="M180 163h64M212 137v52" stroke="#fff" stroke-width="18" stroke-linecap="round"/>
+  <path d="M334 151h28c24 0 43 19 43 43v111c0 18 14 32 32 32h14" fill="none" stroke="#fff" stroke-width="25" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M334 272h28v74c0 21 17 38 38 38h20" fill="none" stroke="#fff" stroke-width="25" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M155 302h114" stroke="#b91c1c" stroke-width="25" stroke-linecap="round"/>
+  <circle cx="369" cy="375" r="66" fill="#15803d" stroke="#fff" stroke-width="16"/>
+  <path d="m338 375 20 20 40-45" fill="none" stroke="#fff" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
