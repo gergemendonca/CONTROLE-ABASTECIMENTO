@@ -4,8 +4,8 @@ export function numericReading(value:unknown):number|null {
  const n=typeof value==='number'?value:Number(value.trim().replace(',','.'));
  return Number.isFinite(n)?n:null;
 }
-export function tankEstimate(startKm:number|null,endKm:number|null,startLiters:number|null,kmPerLiter:number|null,addedLiters:number){
- if(startKm===null||endKm===null||startLiters===null||kmPerLiter===null||kmPerLiter<=0||endKm<startKm)return null;
- const traveledKm=endKm-startKm,usedLiters=traveledKm/kmPerLiter,balance=startLiters+addedLiters-usedLiters;
- return {traveledKm,usedLiters,remainingLiters:Math.max(0,balance),autonomyKm:Math.max(0,balance)*kmPerLiter,inconsistent:balance<-.01,deficitLiters:Math.max(0,-balance)};
+export function projectedTankEstimate(plannedKm:number|null,kmPerLiter:number|null,fueledLiters:number,fuelingCount:number){
+ if(plannedKm===null||!Number.isFinite(plannedKm)||plannedKm<=0||kmPerLiter===null||!Number.isFinite(kmPerLiter)||kmPerLiter<=0||!Number.isFinite(fueledLiters)||fueledLiters<0||fuelingCount<1)return null;
+ const usedLiters=plannedKm/kmPerLiter,balance=fueledLiters-usedLiters;
+ return {usedLiters,remainingLiters:Math.max(0,balance),autonomyKm:Math.max(0,balance)*kmPerLiter,deficitLiters:Math.max(0,-balance)};
 }
