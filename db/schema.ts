@@ -2,6 +2,7 @@ import { sqliteTable, integer, text, real } from 'drizzle-orm/sqlite-core';
 export const vehicles = sqliteTable('vehicles', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   label: text('label').notNull().unique(),
+  consumptionKmL: real('consumption_km_l'),
 });
 export const drivers = sqliteTable('drivers', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -96,4 +97,14 @@ export const appNotifications=sqliteTable('app_notifications',{
  href:text('href').notNull(),
  readAt:text('read_at'),
  createdAt:text('created_at').notNull(),
+});
+
+export const tripEnergy=sqliteTable('trip_energy',{
+ tripId:integer('trip_id').primaryKey().references(()=>trips.id),
+ startKm:integer('start_km').notNull(),
+ endKm:integer('end_km').notNull(),
+ startLiters:real('start_liters').notNull(),
+ consumptionKmL:real('consumption_km_l').notNull(),
+ updatedByName:text('updated_by_name').notNull(),
+ updatedAt:text('updated_at').notNull(),
 });

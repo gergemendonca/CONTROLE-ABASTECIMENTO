@@ -2,12 +2,15 @@ import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
 import {isAdmin} from '../../admin-auth';
 
+import {ensureVehicleConsumption} from '@/app/lib/vehicle-consumption';
+import {numericReading} from '@/app/lib/tank-estimate';
+
 type Context={params:Promise<{id:string}>};
 const validId=(value:string)=>{const id=Number(value);return Number.isSafeInteger(id)&&id>0?id:null};
 
 async function loggedPUT(req:Request,{params}:Context){
  if(!await isAdmin(req))return Response.json({error:'Acesso restrito à Área Adm.'},{status:403});
- try{const id=validId((await params).id),{label}=await req.json() as {label?:string},clean=label?.trim();if(!id||!clean||clean.length>60)return Response.json({error:'Informe um veículo válido.'},{status:400});const vehicle=await env.DB!.prepare('SELECT id FROM vehicles WHERE id=?').bind(id).first();if(!vehicle)return Response.json({error:'Veículo não encontrado.'},{status:404});const duplicate=await env.DB!.prepare('SELECT id FROM vehicles WHERE lower(label)=lower(?) AND id<>? LIMIT 1').bind(clean,id).first();if(duplicate)return Response.json({error:'Já existe outro veículo com este nome ou placa.'},{status:409});const updated=await env.DB!.prepare('UPDATE vehicles SET label=? WHERE id=? RETURNING id,label').bind(clean,id).first();return Response.json({vehicle:updated});}catch{return Response.json({error:'Não foi possível editar o veículo.'},{status:503})}
+ try{const id=validId((await params).id),input=await req.json() as {label?:string;consumptionKmL?:unknown},clean=typeof input.label==='string'?input.label.trim():'';const supplied=Object.prototype.hasOwnProperty.call(input,'consumptionKmL'),value=input.consumptionKmL,consumption=value===undefined||value===null||value===''?null:numericReading(value);if(supplied&&value!==null&&value!==''&&value!==undefined&&(consumption===null||consumption<=0||consumption>100))return Response.json({error:'Informe o consumo em km/L, maior que zero e até 100.'},{status:400});await ensureVehicleConsumption();if(!id||!clean||clean.length>60)return Response.json({error:'Informe um veículo válido.'},{status:400});const vehicle=await env.DB!.prepare('SELECT id FROM vehicles WHERE id=?').bind(id).first();if(!vehicle)return Response.json({error:'Veículo não encontrado.'},{status:404});const duplicate=await env.DB!.prepare('SELECT id FROM vehicles WHERE lower(label)=lower(?) AND id<>? LIMIT 1').bind(clean,id).first();if(duplicate)return Response.json({error:'Já existe outro veículo com este nome ou placa.'},{status:409});const updated=await env.DB!.prepare('UPDATE vehicles SET label=?,consumption_km_l=CASE WHEN ? THEN ? ELSE consumption_km_l END WHERE id=? RETURNING id,label,consumption_km_l AS consumptionKmL').bind(clean,supplied?1:0,consumption,id).first();return Response.json({vehicle:updated});}catch{return Response.json({error:'Não foi possível editar o veículo.'},{status:503})}
 }
 
 async function loggedDELETE(req:Request,{params}:Context){
