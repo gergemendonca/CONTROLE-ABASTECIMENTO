@@ -5,6 +5,7 @@ import {validate} from './common';
 import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
 import {actionDate} from '@/app/lib/action-date';
 import {ensureTripAudit,recordTripAudit} from '@/app/lib/trip-audit';
+import {additionalFuelingRange,fuelingRangeMessage} from '@/app/lib/fueling-range';
 
 export const dynamic='force-dynamic';
 const fields=`f.id,f.vehicle_id AS vehicleId,v.label AS vehicleLabel,f.driver_id AS driverId,f.driver,f.odometer,f.amount_cents AS amountCents,f.created_at AS createdAt,f.liters,f.trip_id AS tripId,f.fuel_request_id AS fuelRequestId,f.launched_by AS launchedById,COALESCE(f.launched_by_name,'Não informado') AS launchedBy,COALESCE(f.direct_launch,0) AS directLaunch,COALESCE(f.retroactive,0) AS retroactive,COALESCE(f.authorization_observation,'') AS authorizationObservation,${controlSql('t')},COALESCE(t.route,(SELECT oldTrip.route FROM trips oldTrip WHERE oldTrip.vehicle_id=f.vehicle_id AND date(f.created_at) BETWEEN COALESCE(oldTrip.departure_date,oldTrip.travel_date) AND COALESCE(oldTrip.arrival_date,oldTrip.travel_date) ORDER BY COALESCE(oldTrip.departure_date,oldTrip.travel_date) DESC LIMIT 1)) AS route`;
@@ -35,7 +36,8 @@ async function loggedPOST(req:Request){
   if(tripIsPast&&!selectedDate)return Response.json({error:'Informe a data e hora reais do abastecimento retroativo no formato DDMMAAAA HHMM.'},{status:400});
   const retroactive=canChooseDriver(session)&&(tripIsPast||!!selectedDate);
   const alreadyFueled=await env.DB!.prepare('SELECT id FROM fueling WHERE trip_id=? LIMIT 1').bind(data.tripId).first();
-  if(alreadyFueled)return Response.json({error:'Esta viagem já possui um abastecimento realizado e não pode receber um novo lançamento.'},{status:409});
+  const inProgress=data.departureDate<=today()&&data.arrivalDate>=today();
+  if(alreadyFueled&&!inProgress)return Response.json({error:'Um abastecimento adicional só pode ser lançado enquanto a viagem estiver em andamento, entre a saída e a chegada.'},{status:409});
   if(!await canLaunchFor(session,data.driverId))return Response.json({error:'Você só pode lançar abastecimento em seu próprio nome.'},{status:403});
   if(!await canUseTrip(session,data.tripId))return Response.json({error:'Esta viagem não está associada ao seu usuário.'},{status:403});
   const last=await env.DB!.prepare('SELECT MAX(odometer) AS odometer FROM fueling WHERE vehicle_id=?').bind(data.vehicleId).first<{odometer:number|null}>();
@@ -43,7 +45,11 @@ async function loggedPOST(req:Request){
   await ensureLaunchAudit();await ensureTripAudit();
   const duplicate=await env.DB!.prepare('SELECT id FROM fueling WHERE vehicle_id=? AND odometer=? LIMIT 1').bind(data.vehicleId,data.odometer).first();
   if(duplicate)return Response.json({error:'Já existe um abastecimento deste veículo com esta quilometragem. Confira o KM informado.'},{status:409});
-  const request=await linkedRequest(data.tripId),directLaunch=!request,id=Date.now()*1000+Math.floor(Math.random()*1000),registeredAt=new Date().toISOString(),date=selectedDate||registeredAt,observation=retroactive?`Lançamento fora do prazo feito por ${session.name} em ${new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short',timeZone:'America/Bahia'}).format(new Date(registeredAt))}.`:directLaunch?`Lançamento direto pela área de usuário, sem autorização prévia formal. Registrado por ${session.name} em ${new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short',timeZone:'America/Bahia'}).format(new Date(registeredAt))}.`:null;
+  if(alreadyFueled&&data.liters>0){
+   const range=await additionalFuelingRange(data.tripId,data.vehicleId);
+   if(range&&data.odometer<range.minimumOdometer)return Response.json({error:fuelingRangeMessage(range,data.odometer),minimumOdometer:range.minimumOdometer},{status:409});
+  }
+  const request=await linkedRequest(data.tripId),directLaunch=!request,id=Date.now()*1000+Math.floor(Math.random()*1000),registeredAt=new Date().toISOString(),date=selectedDate||registeredAt,observation=retroactive?`Lançamento fora do prazo feito por ${session.name} em ${new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short',timeZone:'America/Bahia'}).format(new Date(registeredAt))}.`:directLaunch?`${alreadyFueled?'Abastecimento adicional de viagem em andamento.':'Lançamento direto pela área de usuário, sem autorização prévia formal.'} Registrado por ${session.name} em ${new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short',timeZone:'America/Bahia'}).format(new Date(registeredAt))}.`:null;
   await env.DB!.batch([env.DB!.prepare('INSERT INTO fueling (id,vehicle_id,driver_id,driver,liters,odometer,amount_cents,trip_id,fuel_request_id,launched_by,launched_by_name,direct_launch,authorization_observation,retroactive,created_at,registered_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').bind(id,data.vehicleId,data.driverId,data.driverName,data.liters,data.odometer,data.total,data.tripId,request?.id||null,session.bootstrap?null:session.id,session.name,directLaunch?1:0,observation,retroactive?1:0,date,registeredAt),...data.items.map(item=>env.DB!.prepare('INSERT INTO fueling_items (fueling_id,kind,quantity,amount_cents) VALUES (?,?,?,?)').bind(id,item.kind,item.quantity,item.amountCents))]);
   if(retroactive)await recordTripAudit({tripId:data.tripId,action:'abastecimento_lancado',actorName:session.name,effectiveAt:date,registeredAt,retroactive:true});
   return Response.json({id,createdAt:date,registeredAt,launchedBy:session.name,driver:data.driverName,directLaunch,retroactive,authorizationObservation:observation},{status:201});

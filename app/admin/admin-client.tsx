@@ -33,12 +33,12 @@ type LiveConflict = { kind: "vehicle" | "drivers" | "duplicate"; key: string; me
 const formatDate = (date: string) => date.split("-").reverse().join("/");
 const tripStatus = (status?: Trip["requestStatus"]) => {
   if (status === "fueled")
-    return { icon: "✓", label: "Abastecido", className: "border-sky-400 bg-sky-100 text-sky-900", cardClass: "border-sky-400 bg-sky-100" };
+    return { icon: "✓", label: "Abastecido", className: "border-sky-400 bg-sky-100 text-sky-900", background: "#b9dafe", border: "#2563a6" };
   if (status === "authorized")
-    return { icon: "✓", label: "Autorizado", className: "border-emerald-400 bg-emerald-100 text-emerald-900", cardClass: "border-emerald-400 bg-emerald-100" };
+    return { icon: "✓", label: "Autorizado", className: "border-emerald-400 bg-emerald-100 text-emerald-900", background: "#bfe8cb", border: "#23834a" };
   if (status === "pending")
-    return { icon: "!", label: "Aguardando liberação", className: "border-red-400 bg-red-100 text-red-900", cardClass: "border-red-400 bg-red-100" };
-  return { icon: "●", label: "Pendente de pedido · ainda não solicitado", className: "border-amber-400 bg-amber-100 text-amber-900", cardClass: "border-amber-400 bg-amber-100" };
+    return { icon: "!", label: "Aguardando liberação", className: "border-red-400 bg-red-100 text-red-900", background: "#ffd4d4", border: "#b3262b" };
+  return { icon: "●", label: "Pendente de pedido · ainda não solicitado", className: "border-amber-400 bg-amber-100 text-amber-900", background: "#ffecad", border: "#a77700" };
 };
 const lateActionLabel=(action:string)=>action==='viagem_cadastrada'?'Viagem cadastrada':action==='viagem_editada'?'Viagem editada':action==='pedido_criado'?'Pedido criado':action==='autorizacao_registrada'?'Autorização registrada':'Abastecimento lançado';
 const dateTime=(value:string)=>new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short',timeZone:'America/Bahia'}).format(new Date(value));
@@ -549,11 +549,13 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                   .filter((id) => drivers.some((driver) => driver.id === id))
                   .map(driverName)
                   .filter(Boolean),...(trip.externalDriverNames||[])];
-                const status = trip.fuelCanceledAt ? {icon:"×",label:"Abastecimento cancelado",className:"border-slate-400 bg-slate-200 text-slate-900",cardClass:"border-slate-400 bg-slate-200"} : tripStatus(trip.requestStatus);
+                const status = trip.fuelCanceledAt ? {icon:"×",label:"Abastecimento cancelado",className:"border-slate-400 bg-slate-200 text-slate-900",background:"#d9e0e8",border:"#64748b"} : tripStatus(trip.requestStatus);
                 return (
                   <article
                     key={trip.id}
-                    className={`rounded-2xl border-2 p-5 text-slate-900 shadow-sm ${status.cardClass}`}
+                    className="rounded-2xl border-2 p-5 text-slate-900 shadow-sm"
+                    data-trip-status={trip.fuelCanceledAt ? "canceled" : trip.requestStatus || "missing"}
+                    style={{backgroundColor:status.background,borderColor:status.border,color:"#0f172a"}}
                   >
                     <p className="inline-flex rounded-full bg-[#102b43] px-3 py-1 text-base font-extrabold text-white">Controle: {trip.controlNumber||`V-${String(trip.id).padStart(6,"0")}`}</p>
                     {Number(trip.hasLateActivity)===1&&<p className="mt-3 inline-flex items-center gap-2 rounded-xl border-2 border-amber-500 bg-amber-100 px-3 py-2 text-base font-extrabold text-amber-950"><span className="text-xl" aria-hidden="true">⚠</span>MOVIMENTAÇÃO FORA DO PRAZO</p>}
