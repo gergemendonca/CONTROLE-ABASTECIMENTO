@@ -8,12 +8,14 @@ export async function ensureSystemLog(){
   action TEXT NOT NULL,path TEXT NOT NULL,method TEXT NOT NULL,
   status INTEGER NOT NULL,entity_id TEXT,created_at TEXT NOT NULL
  )`).run();
+ const columns=await env.DB!.prepare('PRAGMA table_info(system_log)').all<{name:string}>();
+ if(!columns.results.some(column=>column.name==='details'))await env.DB!.prepare('ALTER TABLE system_log ADD COLUMN details text').run();
  await env.DB!.prepare('CREATE INDEX IF NOT EXISTS system_log_created ON system_log(created_at,id)').run();
 }
-export async function recordSystemLog(input:{user:SessionUser|null;action:string;path:string;method:string;status:number;entityId?:string;username?:string}){
+export async function recordSystemLog(input:{user:SessionUser|null;action:string;path:string;method:string;status:number;entityId?:string;username?:string;details?:string}){
  await ensureSystemLog();
- await env.DB!.prepare('INSERT INTO system_log(actor_id,actor_name,username,action,path,method,status,entity_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
- .bind(input.user?.id??null,input.user?.name||'Não autenticado',input.user?.username||input.username||'',input.action,input.path,input.method,input.status,input.entityId||null,new Date().toISOString()).run();
+ await env.DB!.prepare('INSERT INTO system_log(actor_id,actor_name,username,action,path,method,status,entity_id,created_at,details) VALUES (?,?,?,?,?,?,?,?,?,?)')
+ .bind(input.user?.id??null,input.user?.name||'Não autenticado',input.user?.username||input.username||'',input.action,input.path,input.method,input.status,input.entityId||null,new Date().toISOString(),input.details||null).run();
 }
 function actionFor(path:string,method:string){
  if(path==='/api/admin-session')return method==='POST'?'Login no app':'Desligar / encerrar sessão';
@@ -36,12 +38,14 @@ export function withSystemLog<T extends (...args:any[])=>Promise<Response>>(hand
    throw error;
   }
   try{
+   let details:string|undefined;
    if(response.ok&&response.headers.get('content-type')?.includes('application/json')){
     const data=await response.clone().json();
     if(path==='/api/admin-session'&&req.method==='POST'&&data.user)user=data.user;
+    if(typeof data.logDetails==="string")details=data.logDetails.slice(0,1500);
     entityId=entityId||String(data.id||data.trip?.id||data.user?.id||data.vehicle?.id||'')||undefined;
    }
-   await recordSystemLog({user,username,action:actionFor(path,req.method),path,method:req.method,status:response.status,entityId});
+   await recordSystemLog({user,username,action:actionFor(path,req.method),path,method:req.method,status:response.status,entityId,details});
   }catch{console.error('Falha ao gravar log do sistema.');}
   return response;
  }) as T;
