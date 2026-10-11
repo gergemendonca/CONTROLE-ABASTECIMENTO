@@ -1,21 +1,9 @@
 import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
-import {getSession,hashPassword} from '../../admin-auth';
+import {ensureUserPasswordPolicy,hashPassword,isAdmin,roles} from '../admin-auth';
+const validRoles=(value:unknown)=>Array.isArray(value)&&value.length>0&&value.every(x=>typeof x==='string'&&roles.includes(x as typeof roles[number]));
+const groups=['motorista','adm','gerencia'] as const;const validGroup=(value:unknown):value is typeof groups[number]=>typeof value==='string'&&groups.includes(value as typeof groups[number]);
+export async function GET(req:Request){if(!await isAdmin(req))return Response.json({error:'Apenas administrador.'},{status:403});await ensureUserPasswordPolicy();const users=await env.DB!.prepare('SELECT id,name,username,group_name AS groupName,roles,active,created_at AS createdAt,password_change_required AS passwordChangeRequired FROM app_users ORDER BY name').all();return Response.json({users:users.results});}
+async function loggedPOST(req:Request){if(!await isAdmin(req))return Response.json({error:'Apenas administrador.'},{status:403});try{await ensureUserPasswordPolicy();const {name,username,userRoles,groupName}=await req.json() as {name?:string;username?:string;userRoles?:unknown;groupName?:unknown};const cleanUser=username?.trim().toLowerCase();if(!name?.trim()||!cleanUser||!validRoles(userRoles)||!validGroup(groupName))return Response.json({error:'Informe nome, grupo, usuário e ao menos uma função.'},{status:400});if(cleanUser==='admin')return Response.json({error:'O usuário admin é reservado para o acesso inicial.'},{status:400});const duplicate=await env.DB!.prepare('SELECT id FROM app_users WHERE username=? LIMIT 1').bind(cleanUser).first();if(duplicate)return Response.json({error:'Este nome de usuário já está em uso. Escolha outro.'},{status:409});const user=await env.DB!.prepare('INSERT INTO app_users (name,username,password_hash,group_name,roles,active,created_at,password_change_required) VALUES (?,?,?,?,?,1,?,1) RETURNING id,name,username,group_name AS groupName,roles,active,created_at AS createdAt,password_change_required AS passwordChangeRequired').bind(name.trim(),cleanUser,await hashPassword('1234'),groupName,JSON.stringify(userRoles),new Date().toISOString()).first();return Response.json({user});}catch{return Response.json({error:'Não foi possível cadastrar o usuário. Tente novamente.'},{status:503})}}
 
-const developerPassword=()=>env.DEVELOPER_PASSWORD||'0815';
-
-async function loggedPUT(req:Request){
- const user=await getSession(req);
- if(!user?.bootstrap)return Response.json({error:'Esta área é exclusiva do administrador principal.'},{status:403});
- try{
-  const {developerCode,userId,password,forceChange}=await req.json() as {developerCode?:string;userId?:number;password?:string;forceChange?:boolean};
-  if(developerCode!==developerPassword())return Response.json({error:'Senha de desenvolvedor incorreta.'},{status:403});
-  if(!Number.isSafeInteger(userId)||typeof password!=='string'||!/^\d{4}$/.test(password))return Response.json({error:'Informe usuário e senha numérica de 4 dígitos.'},{status:400});
-  const target=await env.DB!.prepare('SELECT id FROM app_users WHERE id=?').bind(userId).first();
-  if(!target)return Response.json({error:'Usuário não encontrado.'},{status:404});
-  await env.DB!.prepare('UPDATE app_users SET password_hash=?,password_change_required=? WHERE id=?').bind(await hashPassword(password),forceChange?1:0,userId).run();
-  return Response.json({updated:true});
- }catch{return Response.json({error:'Não foi possível redefinir a senha.'},{status:503});}
-}
-
-export const PUT=withSystemLog(loggedPUT);
+export const POST=withSystemLog(loggedPOST);
