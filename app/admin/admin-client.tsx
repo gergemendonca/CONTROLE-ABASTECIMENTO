@@ -13,7 +13,9 @@ type Trip = {
   totalValueCents: number;
   controlNumber?: string;
   userIds: number[];
-  requestStatus?: "missing" | "pending" | "authorized" | "fueled";
+  noFueling?:number;
+  plannedLiters?:number|null;
+  requestStatus?: "missing" | "pending" | "authorized" | "fueled" | "not_required";
   fuelCanceledAt?: string;
   fuelCanceledBy?: string;
   fuelCancelReason?: string;
@@ -30,8 +32,10 @@ type AppUser = {
 };
 type Confirmation = { messages: string[]; hasConflict: boolean };
 type LiveConflict = { kind: "vehicle" | "drivers" | "duplicate"; key: string; message: string; driverIds?: number[] };
+const decimal=(value:string)=>{const clean=value.trim();return Number(clean.includes(",")?clean.replace(/\./g,"").replace(",","."):clean)};
 const formatDate = (date: string) => date.split("-").reverse().join("/");
 const tripStatus = (status?: Trip["requestStatus"]) => {
+  if(status==="not_required")return {icon:"—",label:"Viagem sem abastecimento",className:"border-slate-400 bg-slate-200 text-slate-900",background:"#e2e8f0",border:"#64748b"};
   if (status === "fueled")
     return { icon: "✓", label: "Abastecido", className: "border-sky-400 bg-sky-100 text-sky-900", background: "#b9dafe", border: "#2563a6" };
   if (status === "authorized")
@@ -58,6 +62,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     [route, setRoute] = useState(""),
     [totalKm, setTotalKm] = useState(""),
     [totalValue, setTotalValue] = useState(""),
+    [noFueling,setNoFueling]=useState(false),[plannedLiters,setPlannedLiters]=useState(""),[originalLiters,setOriginalLiters]=useState<number|null>(null),
     [paymentStatus,setPaymentStatus]=useState<"total"|"parcial"|"nao_pago">("nao_pago"),
     [outstandingValue,setOutstandingValue]=useState(""),
     [datesConfirmed, setDatesConfirmed] = useState(false),
@@ -122,7 +127,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     setArrivalDate(today);
     setRoute("");
     setTotalKm("");
-    setTotalValue("");
+    setTotalValue("");setNoFueling(false);setPlannedLiters("");setOriginalLiters(null);
     setPaymentStatus("nao_pago");
     setOutstandingValue("");
     setDatesConfirmed(false);
@@ -222,11 +227,14 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
   }
   async function persist(allowConflicts: boolean) {
     const wasEditing = editing !== null,
-      totalValueCents=Math.round(Number(String(totalValue).replace(/\./g, "").replace(",", ".")) * 100),
-      enteredOutstandingCents=Math.round(Number(String(outstandingValue).replace(/\./g, "").replace(",", ".")) * 100),
+      totalValueCents=Math.round(decimal(totalValue) * 100),
+      enteredOutstandingCents=Math.round(decimal(outstandingValue) * 100),
       outstandingCents=paymentStatus==="total"?0:paymentStatus==="nao_pago"?totalValueCents:enteredOutstandingCents;
+    const restored=plannedLiters.trim()?decimal(plannedLiters):originalLiters;
+    if(restored!==null&&(!Number.isFinite(restored)||restored<=0))return setMsg("Informe uma quantidade de litros maior que zero.");
+    if(!plannedLiters.trim()&&originalLiters!==null)setPlannedLiters(String(originalLiters).replace(".",","));
     if(!Number.isSafeInteger(totalValueCents)||totalValueCents<=0)return setMsg("Informe um valor total válido.");
-    if(wasEditing&&paymentStatus==="total"&&outstandingCents!==0)return setMsg("Viagem totalmente paga não pode ter valor em aberto.");
+    if(paymentStatus==="total"&&outstandingCents!==0)return setMsg("Viagem totalmente paga não pode ter valor em aberto.");
     if(wasEditing&&paymentStatus==="parcial"&&(!Number.isSafeInteger(outstandingCents)||outstandingCents<=0||outstandingCents>=totalValueCents))return setMsg("No pagamento parcial, o valor em aberto deve ser maior que zero e menor que o valor total.");
     if(wasEditing&&paymentStatus==="nao_pago"&&outstandingCents!==totalValueCents)return setMsg("Em viagem não paga, o valor em aberto deve ser igual ao valor total.");
     const response = await fetch(editing ? `/api/trips/${editing}/full-edit` : "/api/trips", {
@@ -239,6 +247,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
           route,
           totalKm: Number(totalKm),
           totalValueCents,
+          noFueling,plannedLiters:restored,
           associatedUserIds: selectedDriverIds,
           externalDriverNames,
           paymentStatus,
@@ -267,7 +276,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
   }
   function edit(trip: Trip) {
-    setEditing(trip.id);
+    setEditing(trip.id);setNoFueling(Number(trip.noFueling)===1);setOriginalLiters(trip.plannedLiters??null);setPlannedLiters(trip.plannedLiters==null?"":String(trip.plannedLiters).replace(".",","));
     setCar(String(trip.vehicleId));
     setDepartureDate(trip.departureDate);
     setArrivalDate(trip.arrivalDate);
@@ -385,15 +394,16 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                 required
                 min="0.01"
                 inputMode="decimal"
-                type="number"
-                step="0.01"
+                type="text"
                 value={totalValue}
                 onChange={(event) => setTotalValue(event.target.value)}
                 placeholder="Ex.: 1.250,00"
                 className="mt-2 h-16 w-full rounded-xl border p-3 text-2xl"
               />
             </label>
-            {editing&&<><label className="block text-lg font-bold">Situação de pagamento<select value={paymentStatus} onChange={(event)=>{const status=event.target.value as "total"|"parcial"|"nao_pago";setPaymentStatus(status);if(status==="total")setOutstandingValue("");if(status==="nao_pago")setOutstandingValue(totalValue)}} className="mt-2 h-16 w-full rounded-xl border bg-white p-3 text-xl"><option value="total">Totalmente paga</option><option value="parcial">Parcialmente paga</option><option value="nao_pago">Não paga</option></select></label>{paymentStatus==="parcial"&&<label className="block text-lg font-bold">Valor em aberto (R$)<input required inputMode="decimal" value={outstandingValue} onChange={(event)=>setOutstandingValue(event.target.value)} placeholder="Ex.: 350,00" className="mt-2 h-16 w-full rounded-xl border p-3 text-2xl"/></label>}</>}
+            <label className="block rounded-xl border-2 border-[#0b7184] bg-sky-50 p-4 text-lg font-bold">Esta viagem terá abastecimento?<select value={noFueling?"nao":"sim"} onChange={event=>setNoFueling(event.target.value==="nao")} className="mt-2 min-h-14 w-full rounded-xl border bg-white p-3 text-xl"><option value="sim">Sim</option><option value="nao">Não — sem solicitação, autorização ou abastecimento</option></select><span className="mt-2 block text-sm font-normal">Você pode mudar esta opção na edição. O histórico já registrado será preservado.</span></label>
+            {!noFueling&&<label className="block text-lg font-bold">Litros previstos / solicitados<input inputMode="decimal" value={plannedLiters} onChange={event=>setPlannedLiters(event.target.value)} placeholder="Opcional: ex. 100,50" className="mt-2 h-16 w-full rounded-xl border p-3 text-2xl"/><span className="mt-2 block text-sm font-normal text-slate-600">Na edição, se salvar este campo vazio, os litros anteriores serão mantidos.</span></label>}
+            {<><label className="block text-lg font-bold">Situação de pagamento<select value={paymentStatus} onChange={(event)=>{const status=event.target.value as "total"|"parcial"|"nao_pago";setPaymentStatus(status);if(status==="total")setOutstandingValue("");if(status==="nao_pago")setOutstandingValue(totalValue)}} className="mt-2 h-16 w-full rounded-xl border bg-white p-3 text-xl"><option value="total">Totalmente paga</option><option value="parcial">Parcialmente paga</option><option value="nao_pago">Não paga</option></select></label>{paymentStatus==="parcial"&&<label className="block text-lg font-bold">Valor em aberto (R$)<input required inputMode="decimal" value={outstandingValue} onChange={(event)=>setOutstandingValue(event.target.value)} placeholder="Ex.: 350,00" className="mt-2 h-16 w-full rounded-xl border p-3 text-2xl"/></label>}</>}
             <label className="block text-lg font-bold">
               Roteiro
               <textarea
@@ -549,12 +559,12 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                   .filter((id) => drivers.some((driver) => driver.id === id))
                   .map(driverName)
                   .filter(Boolean),...(trip.externalDriverNames||[])];
-                const status = trip.fuelCanceledAt ? {icon:"×",label:"Abastecimento cancelado",className:"border-slate-400 bg-slate-200 text-slate-900",background:"#d9e0e8",border:"#64748b"} : tripStatus(trip.requestStatus);
+                const status = Number(trip.noFueling)===1 ? tripStatus("not_required") : trip.fuelCanceledAt ? {icon:"×",label:"Abastecimento cancelado",className:"border-slate-400 bg-slate-200 text-slate-900",background:"#d9e0e8",border:"#64748b"} : tripStatus(trip.requestStatus);
                 return (
                   <article
                     key={trip.id}
                     className="rounded-2xl border-2 p-5 text-slate-900 shadow-sm"
-                    data-trip-status={trip.fuelCanceledAt ? "canceled" : trip.requestStatus || "missing"}
+                    data-trip-status={trip.noFueling ? "not_required" : trip.fuelCanceledAt ? "canceled" : trip.requestStatus || "missing"}
                     style={{backgroundColor:status.background,borderColor:status.border,color:"#0f172a"}}
                   >
                     <p className="inline-flex rounded-full bg-[#102b43] px-3 py-1 text-base font-extrabold text-white">Controle: {trip.controlNumber||`V-${String(trip.id).padStart(6,"0")}`}</p>
@@ -624,7 +634,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                         >
                           Cancelar viagem
                         </button>
-                        {!trip.fuelCanceledAt&&<button type="button" onClick={async()=>{const reason=window.prompt("Cancelar abastecimento desta viagem? A viagem permanece no histórico e nos relatórios. Litros, produtos e despesas serão excluídos dos cálculos. Informe o motivo:");if(reason===null)return;if(reason.trim().length<3){setMsg("Informe um motivo com pelo menos 3 caracteres.");return;}if(!window.confirm("Confirma o cancelamento do abastecimento?"))return;try{const response=await fetch(`/api/trips/${trip.id}/cancel-fueling`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reason})});const data=await response.json();if(!response.ok)throw Error(data.error);setMsg(data.message);await load();}catch(error){setMsg(error instanceof Error?error.message:"Falha ao cancelar.");}}} className="min-h-12 rounded-xl border-2 border-red-800 bg-white px-4 py-2 text-lg font-bold text-red-800">Cancelar abastecimento</button>}
+                        {!trip.noFueling&&!trip.fuelCanceledAt&&<button type="button" onClick={async()=>{const reason=window.prompt("Cancelar abastecimento desta viagem? A viagem permanece no histórico e nos relatórios. Litros, produtos e despesas serão excluídos dos cálculos. Informe o motivo:");if(reason===null)return;if(reason.trim().length<3){setMsg("Informe um motivo com pelo menos 3 caracteres.");return;}if(!window.confirm("Confirma o cancelamento do abastecimento?"))return;try{const response=await fetch(`/api/trips/${trip.id}/cancel-fueling`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reason})});const data=await response.json();if(!response.ok)throw Error(data.error);setMsg(data.message);await load();}catch(error){setMsg(error instanceof Error?error.message:"Falha ao cancelar.");}}} className="min-h-12 rounded-xl border-2 border-red-800 bg-white px-4 py-2 text-lg font-bold text-red-800">Cancelar abastecimento</button>}
                       </div>
                     )}
                   </article>

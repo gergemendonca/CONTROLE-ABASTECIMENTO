@@ -13,7 +13,7 @@ export async function GET(req:Request){
  if(before!==null&&(!Number.isSafeInteger(before)||before<=0))return Response.json({error:'Página inválida.'},{status:400});
  const rows=await env.DB!.prepare(`SELECT t.id,${controlSql('t')},t.route,v.label AS vehicleLabel,
  COALESCE(t.departure_date,t.travel_date) AS departureDate,COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,
- t.total_km AS plannedKm,v.consumption_km_l AS consumptionKmL,
+ COALESCE(t.no_fueling,0) AS noFueling,t.total_km AS plannedKm,v.consumption_km_l AS consumptionKmL,
  COALESCE(f.fueledLiters,0) AS fueledLiters,COALESCE(f.fuelingCount,0) AS fuelingCount,
  f.firstOdometer,f.lastOdometer
  FROM trips t JOIN vehicles v ON v.id=t.vehicle_id

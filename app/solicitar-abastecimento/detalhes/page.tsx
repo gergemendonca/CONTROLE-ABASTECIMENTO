@@ -2,21 +2,21 @@
 
 import {useEffect,useRef,useState} from 'react';
 
-type Trip={id:number;controlNumber?:string;vehicleLabel:string;route:string;totalKm:number;totalValueCents?:number};
+type Trip={id:number;controlNumber?:string;vehicleLabel:string;route:string;totalKm:number;totalValueCents?:number;plannedLiters?:number|null;noFueling?:number;paymentStatus?:Detail['paymentStatus'];outstandingCents?:number};
 type Detail={liters:string;paymentStatus:'total'|'parcial'|'nao_pago';balance:string;clientPaid:boolean};
 type Errors=Record<number,string>;
 const draftKey='sd-tour-solicitacao-multipla-rascunho';
 const decimal=(value:string)=>{const clean=value.trim();return Number(clean.includes(',')?clean.replace(/\./g,'').replace(',','.'):clean)};
 const money=(value:number)=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(value/100);
 const cents=(value:string)=>Math.round(decimal(value)*100);
-const blank=(trip:Trip):Detail=>({liters:'',paymentStatus:'nao_pago',balance:((trip.totalValueCents||0)/100).toFixed(2).replace('.',','),clientPaid:false});
+const blank=(trip:Trip):Detail=>({liters:trip.plannedLiters==null?'':String(trip.plannedLiters).replace('.',','),paymentStatus:trip.paymentStatus||'nao_pago',balance:((trip.outstandingCents??trip.totalValueCents??0)/100).toFixed(2).replace('.',','),clientPaid:false});
 const paymentVisual=(status:Detail['paymentStatus'])=>status==='total'?{icon:'✓',label:'Totalmente paga',className:'bg-green-50 text-[#178045]'}:status==='parcial'?{icon:'?',label:'Parcialmente paga',className:'bg-amber-50 text-[#a16207]'}:{icon:'×',label:'Não paga',className:'bg-red-50 text-[#b3262b]'};
 
 export default function DetalhesSolicitacao(){
  const [trips,setTrips]=useState<Trip[]>([]),[details,setDetails]=useState<Record<number,Detail>>({}),[message,setMessage]=useState('Carregando roteiros...'),[errors,setErrors]=useState<Errors>({}),[editingTrip,setEditingTrip]=useState<number|null>(null);
  const retroactive=typeof window!=='undefined'&&new URLSearchParams(window.location.search).get('retroativo')==='1';
  const cards=useRef<Record<number,HTMLDivElement|null>>({});
- useEffect(()=>{void (async()=>{const ids=new URLSearchParams(window.location.search).getAll('trip').map(Number).filter(Number.isInteger);if(!ids.length){window.location.replace('/solicitar-abastecimento');return}try{const response=await fetch('/api/trips',{cache:'no-store'}),data:any=await response.json();if(!response.ok){setMessage(data.error||'Não foi possível carregar os roteiros.');return}const chosen=(data.trips||[]).filter((trip:Trip)=>ids.includes(trip.id));let saved:Record<number,Detail>|null=null;try{const draft=JSON.parse(sessionStorage.getItem(draftKey)||'null');if(Array.isArray(draft?.tripIds)&&draft.tripIds.length===ids.length&&draft.tripIds.every((id:number)=>ids.includes(id)))saved=draft.details||null}catch{}setTrips(chosen);setDetails(saved?Object.fromEntries(chosen.map(trip=>[trip.id,{...blank(trip),...saved?.[trip.id]}])):Object.fromEntries(chosen.map(trip=>[trip.id,blank(trip)])));setEditingTrip(chosen[0]?.id||null);setMessage('')}catch{setMessage('Não foi possível carregar os roteiros.')}})()},[]);
+ useEffect(()=>{void (async()=>{const ids=new URLSearchParams(window.location.search).getAll('trip').map(Number).filter(Number.isInteger);if(!ids.length){window.location.replace('/solicitar-abastecimento');return}try{const response=await fetch('/api/trips',{cache:'no-store'}),data:any=await response.json();if(!response.ok){setMessage(data.error||'Não foi possível carregar os roteiros.');return}const chosen=(data.trips||[]).filter((trip:Trip)=>ids.includes(trip.id)&&Number(trip.noFueling)!==1);let saved:Record<number,Detail>|null=null;try{const draft=JSON.parse(sessionStorage.getItem(draftKey)||'null');if(Array.isArray(draft?.tripIds)&&draft.tripIds.length===ids.length&&draft.tripIds.every((id:number)=>ids.includes(id)))saved=draft.details||null}catch{}setTrips(chosen);setDetails(saved?Object.fromEntries(chosen.map(trip=>[trip.id,{...blank(trip),...saved?.[trip.id]}])):Object.fromEntries(chosen.map(trip=>[trip.id,blank(trip)])));setEditingTrip(chosen[0]?.id||null);setMessage('')}catch{setMessage('Não foi possível carregar os roteiros.')}})()},[]);
  useEffect(()=>{if(!trips.length)return;try{sessionStorage.setItem(draftKey,JSON.stringify({tripIds:trips.map(trip=>trip.id),details}))}catch{}},[trips,details]);
  function update(trip:Trip,patch:Partial<Detail>){setDetails(all=>({...all,[trip.id]:{...(all[trip.id]||blank(trip)),...patch}}));setErrors(all=>{const next={...all};delete next[trip.id];return next});}
  function changePayment(trip:Trip,status:Detail['paymentStatus']){const previous=details[trip.id]||blank(trip);update(trip,{paymentStatus:status,balance:status==='total'?'':status==='nao_pago'?((trip.totalValueCents||0)/100).toFixed(2).replace('.',','):previous.balance})}

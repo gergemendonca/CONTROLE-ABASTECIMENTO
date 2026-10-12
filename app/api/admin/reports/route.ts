@@ -3,6 +3,7 @@ import {isAdmin} from '../../admin-auth';
 import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
 import {activeTrip,ensureTripCancellation} from '@/app/lib/trip-cancellation';
 
+import {ensureFuelingFunding} from '@/app/lib/trip-fuel-options';
 export const dynamic='force-dynamic';
 
 function isoDate(value:string|null,fallback:string){
@@ -18,7 +19,7 @@ async function ensureClientPaidColumn(){
 export async function GET(req:Request){
  if(!await isAdmin(req))return Response.json({error:'Apenas o administrador pode gerar relatórios.'},{status:403});
  try{
-  await ensureClientPaidColumn();await ensureTripControl();await ensureTripCancellation();
+  await ensureClientPaidColumn();await ensureFuelingFunding();await ensureTripControl();await ensureTripCancellation();
   const url=new URL(req.url);
   const today=new Date().toISOString().slice(0,10);
   const firstOfMonth=`${today.slice(0,7)}-01`;
@@ -36,11 +37,11 @@ export async function GET(req:Request){
     f.trip_id AS tripId,f.created_at AS createdAt,f.liters,f.amount_cents AS amountCents,
     COALESCE(t.route,'Roteiro não informado') AS route,${controlSql('t')},
     COALESCE(t.total_km,0) AS totalKm,COALESCE(t.total_value_cents,0) AS totalValueCents,
-    COALESCE(fr.payment_status,'') AS paymentStatus,COALESCE(fr.outstanding_cents,0) AS outstandingCents,COALESCE(fr.client_paid,0) AS clientPaid
+    COALESCE(fr.payment_status,'') AS paymentStatus,COALESCE(fr.outstanding_cents,0) AS outstandingCents,COALESCE(f.paid_by_third_party,fr.client_paid,0) AS clientPaid
    FROM fueling f
    JOIN vehicles v ON v.id=f.vehicle_id
    LEFT JOIN trips t ON t.id=f.trip_id
-   LEFT JOIN fuel_requests fr ON fr.id=(SELECT id FROM fuel_requests q WHERE q.trip_id=f.trip_id ORDER BY q.id DESC LIMIT 1)
+   LEFT JOIN fuel_requests fr ON fr.id=COALESCE(f.fuel_request_id,(SELECT id FROM fuel_requests q WHERE q.trip_id=f.trip_id ORDER BY q.id DESC LIMIT 1))
    WHERE date(f.created_at,'-3 hours') BETWEEN ? AND ? AND (t.id IS NULL OR (${activeTrip('t')} AND COALESCE(t.fuel_canceled_at,'')=''))
    ORDER BY f.created_at DESC,f.id DESC
   `).bind(from,to).all();
@@ -51,7 +52,7 @@ export async function GET(req:Request){
     COALESCE(t.departure_date,t.travel_date) AS departureDate,
     COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,
     COALESCE(t.total_km,0) AS totalKm,COALESCE(t.total_value_cents,0) AS totalValueCents,
-    CASE WHEN COALESCE(t.fuel_canceled_at,'')<>'' THEN 'fuel_canceled' WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1)='pending' THEN 'pending'
+    CASE WHEN COALESCE(t.no_fueling,0)=1 THEN 'not_required' WHEN COALESCE(t.fuel_canceled_at,'')<>'' THEN 'fuel_canceled' WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1)='pending' THEN 'pending'
          WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1)='authorized' THEN CASE WHEN EXISTS (SELECT 1 FROM fueling completed WHERE completed.fuel_request_id=(SELECT fr.id FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1)) THEN 'fueled' ELSE 'authorized' END
          WHEN EXISTS (SELECT 1 FROM fueling completed WHERE completed.trip_id=t.id) THEN 'fueled'
          ELSE 'missing' END AS status
@@ -63,7 +64,7 @@ export async function GET(req:Request){
       WHERE linked.id=completed.fuel_request_id AND linked.trip_id=t.id
     ))
     AND date(completed.created_at,'-3 hours') BETWEEN ? AND ?
-   ) OR (COALESCE(t.fuel_canceled_at,'')<>'' AND COALESCE(t.departure_date,t.travel_date) BETWEEN ? AND ?))
+   ) OR ((COALESCE(t.fuel_canceled_at,'')<>'' OR COALESCE(t.no_fueling,0)=1) AND COALESCE(t.departure_date,t.travel_date) BETWEEN ? AND ?))
    ORDER BY COALESCE(t.departure_date,t.travel_date) DESC,t.id DESC
   `).bind(from,to,from,to).all();
   return Response.json({from,to,generatedAt:new Date().toISOString(),records:rows.results||[],trips:trips.results||[]});
