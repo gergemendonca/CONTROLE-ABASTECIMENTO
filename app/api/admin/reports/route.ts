@@ -3,7 +3,7 @@ import {isAdmin} from '../../admin-auth';
 import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
 import {activeTrip,ensureTripCancellation} from '@/app/lib/trip-cancellation';
 
-import {ensureFuelingFunding} from '@/app/lib/trip-fuel-options';
+import {ensureFuelingFunding,ensureTripFuelOptions} from '@/app/lib/trip-fuel-options';
 export const dynamic='force-dynamic';
 
 function isoDate(value:string|null,fallback:string){
@@ -19,17 +19,33 @@ async function ensureClientPaidColumn(){
 export async function GET(req:Request){
  if(!await isAdmin(req))return Response.json({error:'Apenas o administrador pode gerar relatórios.'},{status:403});
  try{
-  await ensureClientPaidColumn();await ensureFuelingFunding();await ensureTripControl();await ensureTripCancellation();
+  await ensureClientPaidColumn();await ensureTripFuelOptions();await ensureFuelingFunding();await ensureTripControl();await ensureTripCancellation();
   const url=new URL(req.url);
   const today=new Date().toISOString().slice(0,10);
   const firstOfMonth=`${today.slice(0,7)}-01`;
   const from=isoDate(url.searchParams.get('from'),firstOfMonth);
   const to=isoDate(url.searchParams.get('to'),today);
   const canceled=url.searchParams.get('kind')==='canceladas';
+  const payments=url.searchParams.get('kind')==='pagamentos';
   if(from>to)return Response.json({error:'A data inicial não pode ser posterior à data final.'},{status:400});
   if(canceled){
    const rows=await env.DB!.prepare(`SELECT t.id,${controlSql('t')},v.label AS vehicleLabel,t.route,COALESCE(t.departure_date,t.travel_date) AS departureDate,COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,COALESCE(t.total_km,0) AS totalKm,COALESCE(t.total_value_cents,0) AS totalValueCents,COALESCE(t.cancel_reason,'Motivo não informado') AS cancelReason,COALESCE(t.canceled_by_name,'Não informado') AS canceledBy,COALESCE(t.canceled_at,'') AS canceledAt FROM trips t JOIN vehicles v ON v.id=t.vehicle_id WHERE COALESCE(t.canceled_at,'')<>'' AND date(t.canceled_at,'-3 hours') BETWEEN ? AND ? ORDER BY t.canceled_at DESC,t.id DESC`).bind(from,to).all();
    return Response.json({from,to,generatedAt:new Date().toISOString(),records:[],trips:[],canceledTrips:rows.results||[]});
+  }
+  if(payments){
+   const trips=await env.DB!.prepare(`
+    SELECT t.id,${controlSql('t')},v.label AS vehicleLabel,t.route,
+     COALESCE(t.departure_date,t.travel_date) AS departureDate,
+     COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,
+     COALESCE(t.total_km,0) AS totalKm,COALESCE(t.total_value_cents,0) AS totalValueCents,
+     COALESCE((SELECT fr.payment_status FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1),t.payment_status,'nao_pago') AS paymentStatus,
+     COALESCE((SELECT fr.outstanding_cents FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1),t.outstanding_cents,t.total_value_cents,0) AS outstandingCents,
+     CASE WHEN COALESCE(t.no_fueling,0)=1 THEN 'not_required' WHEN COALESCE(t.fuel_canceled_at,'')<>'' THEN 'fuel_canceled' WHEN EXISTS (SELECT 1 FROM fueling completed WHERE completed.trip_id=t.id OR EXISTS (SELECT 1 FROM fuel_requests linked WHERE linked.id=completed.fuel_request_id AND linked.trip_id=t.id)) THEN 'fueled' WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1)='pending' THEN 'pending' WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1)='authorized' THEN 'authorized' ELSE 'missing' END AS status
+    FROM trips t JOIN vehicles v ON v.id=t.vehicle_id
+    WHERE ${activeTrip('t')} AND COALESCE(t.departure_date,t.travel_date) BETWEEN ? AND ?
+    ORDER BY COALESCE(t.departure_date,t.travel_date) DESC,t.id DESC
+   `).bind(from,to).all();
+   return Response.json({from,to,generatedAt:new Date().toISOString(),records:[],trips:trips.results||[]});
   }
   const rows=await env.DB!.prepare(`
    SELECT
