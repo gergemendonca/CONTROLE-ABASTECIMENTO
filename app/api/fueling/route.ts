@@ -38,7 +38,7 @@ async function loggedPOST(req:Request){
   const retroactive=canChooseDriver(session)&&(tripIsPast||!!selectedDate);
   const alreadyFueled=await env.DB!.prepare('SELECT id FROM fueling WHERE trip_id=? LIMIT 1').bind(data.tripId).first();
   const inProgress=data.departureDate<=today()&&data.arrivalDate>=today();
-  if(alreadyFueled&&!inProgress)return Response.json({error:'Um abastecimento adicional só pode ser lançado enquanto a viagem estiver em andamento, entre a saída e a chegada.'},{status:409});
+  if(alreadyFueled&&!inProgress&&!canChooseDriver(session))return Response.json({error:'Um abastecimento adicional só pode ser lançado enquanto a viagem estiver em andamento, entre a saída e a chegada.'},{status:409});
   if(!await canLaunchFor(session,data.driverId))return Response.json({error:'Você só pode lançar abastecimento em seu próprio nome.'},{status:403});
   if(!await canUseTrip(session,data.tripId))return Response.json({error:'Esta viagem não está associada ao seu usuário.'},{status:403});
   const last=await env.DB!.prepare('SELECT MAX(odometer) AS odometer FROM fueling WHERE vehicle_id=?').bind(data.vehicleId).first<{odometer:number|null}>();
