@@ -625,7 +625,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                           onClick={() => window.location.assign(`/admin/viagens/nova?edit=${trip.id}&return=${encodeURIComponent('/admin/viagens')}`)}
                           className="h-12 rounded-xl bg-[#e7b629] px-5 text-lg font-bold text-[#2c2509]"
                         >
-                          Editar
+                          Editar viagem
                         </button>
                         <button
                           type="button"

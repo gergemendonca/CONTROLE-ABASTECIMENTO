@@ -19,3 +19,53 @@ main.min-h-\[100dvh\] > div > section > button:first-child::after {
   font-size: clamp(1.5rem, 4vw, 2rem);
   line-height: 1.15;
 }
+
+/* Lista de viagens: impressão legível em papel A4, sem conteúdo fora das células. */
+@page {
+  size: A4 landscape;
+  margin: 10mm;
+}
+
+@media print {
+  html,
+  body {
+    background: #fff !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .trip-list-print {
+    background: #fff !important;
+  }
+
+  .trip-list-print table {
+    width: 100% !important;
+    min-width: 0 !important;
+    table-layout: fixed !important;
+    border-collapse: collapse !important;
+  }
+
+  .trip-list-print thead {
+    display: table-header-group;
+  }
+
+  .trip-list-print th,
+  .trip-list-print td {
+    box-sizing: border-box;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    vertical-align: top;
+    padding: 5px !important;
+    border: 1px solid #cbd5e1 !important;
+  }
+
+  .trip-list-print th {
+    background: #102b43 !important;
+    color: #fff !important;
+  }
+
+  .trip-list-print tbody tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}
