@@ -3,6 +3,7 @@ import {env} from 'cloudflare:workers';
 import {isManagementUser,requireRole} from '../admin-auth';
 import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
 import {ensureTripAudit,recordTripAudit} from '@/app/lib/trip-audit';
+import {ensureVehicleFuelAssignment,tripFueledSql} from '@/app/lib/vehicle-fueling-assignment';
 import {activeTrip,ensureTripCancellation} from '@/app/lib/trip-cancellation';
 
 type Item={tripId:number;liters:number;routeKm:number;paymentStatus:'total'|'parcial'|'nao_pago';outstandingCents:number;clientPaid?:boolean};
@@ -20,7 +21,7 @@ async function loggedPOST(req:Request){
  const access=await requireRole(req,'solicitante');
  if(!access.user)return Response.json({error:access.error},{status:403});
  try{
-  await ensureAuditNames();await ensureTripControl();await ensureTripCancellation();
+  await ensureAuditNames();await ensureTripControl();await ensureTripCancellation();await ensureVehicleFuelAssignment();
   const {requests}=await req.json() as {requests?:Item[]};
   const management=isManagementUser(access.user);
   if(!Array.isArray(requests)||requests.length===0)return Response.json({error:'Selecione ao menos uma viagem.'},{status:400});
@@ -37,7 +38,9 @@ async function loggedPOST(req:Request){
    if(item.paymentStatus==='total'&&item.outstandingCents!==0)return Response.json({error:'Viagem totalmente paga não pode ter valor em aberto.'},{status:400});
    if(item.paymentStatus==='parcial'&&(item.outstandingCents<=0||item.outstandingCents>=total))return Response.json({error:'Em pagamento parcial, o valor em aberto deve ser maior que zero e menor que o valor total da viagem.'},{status:400});
    if(item.paymentStatus==='nao_pago'&&item.outstandingCents!==total)return Response.json({error:'Em viagem não paga, o valor em aberto deve ser exatamente igual ao valor total da viagem.'},{status:400});
-   const existing=await env.DB!.prepare('SELECT id FROM fuel_requests WHERE trip_id=? AND status=\'pending\' LIMIT 1').bind(item.tripId).first();
+   const alreadyFueled=await env.DB!.prepare(`SELECT t.id FROM trips t WHERE t.id=? AND ${tripFueledSql('t')} LIMIT 1`).bind(item.tripId).first();
+   if(alreadyFueled)return Response.json({error:'O veículo desta viagem já tem abastecimento inicial vinculado. Não crie um segundo pedido.'},{status:409});
+   const existing=await env.DB!.prepare("SELECT id FROM fuel_requests WHERE trip_id=? AND status IN ('pending','authorized') LIMIT 1").bind(item.tripId).first();
    if(existing)return Response.json({error:'Esta viagem já possui um pedido pendente de autorização.'},{status:409});
    const inserted=await env.DB!.prepare("INSERT INTO fuel_requests (trip_id,requested_by,requested_by_name,liters,route_km,payment_status,outstanding_cents,client_paid,retroactive,status,created_at,registered_at) VALUES (?,?,?,?,?,?,?,?,?,'pending',?,?)").bind(item.tripId,access.user.bootstrap?null:access.user.id,access.user.name,item.liters,item.routeKm,item.paymentStatus,item.outstandingCents,item.clientPaid?1:0,isRetroactive?1:0,now,now).run();
    const requestId=Number((inserted as any).meta?.last_row_id);
@@ -58,14 +61,14 @@ async function loggedPOST(req:Request){
 export async function GET(req:Request){
  const access=await requireRole(req,'solicitante','autorizador','avisado');
  if(!access.user)return Response.json({error:access.error},{status:403});
- await ensureAuditNames();await ensureTripControl();await ensureTripCancellation();
+ await ensureAuditNames();await ensureTripControl();await ensureTripCancellation();await ensureVehicleFuelAssignment();
  const params=new URL(req.url).searchParams,requestedStatus=params.get('status'),status=requestedStatus==='pending'||requestedStatus==='authorized'?requestedStatus:null,requestId=Number(params.get('pedido')),byId=Number.isSafeInteger(requestId)&&requestId>0,tripId=Number(params.get('tripId')),byTrip=Number.isSafeInteger(tripId)&&tripId>0;
  const management=isManagementUser(access.user),canViewFinancial=management||access.user.roles.includes('autorizador');
  // Pedidos comuns deixam de ser pendência quando o período da viagem termina.
  // Somente pedidos marcados como retroativos continuam disponíveis após isso.
- let where=status==='authorized'?" WHERE f.status='authorized' AND NOT EXISTS (SELECT 1 FROM fueling completed WHERE completed.fuel_request_id=f.id OR completed.trip_id=f.trip_id)":" WHERE (f.status='pending' OR NOT EXISTS (SELECT 1 FROM fueling completed WHERE completed.fuel_request_id=f.id OR completed.trip_id=f.trip_id)) AND (f.status='authorized' OR COALESCE(t.arrival_date,t.travel_date)>=? OR COALESCE(f.retroactive,0)=1)",binds:unknown[]=status==='authorized'?[]:[today()];
+ let where=status==='authorized'?" WHERE f.status='authorized' AND NOT EXISTS (SELECT 1 FROM fueling completed WHERE completed.vehicle_id=t.vehicle_id AND (completed.trip_id=t.id OR (completed.trip_id IS NULL AND completed.original_trip_id IS NULL AND completed.fuel_request_id=f.id)))":" WHERE f.status IN ('pending','authorized') AND (f.status='pending' OR NOT EXISTS (SELECT 1 FROM fueling completed WHERE completed.vehicle_id=t.vehicle_id AND (completed.trip_id=t.id OR (completed.trip_id IS NULL AND completed.original_trip_id IS NULL AND completed.fuel_request_id=f.id)))) AND (f.status='authorized' OR COALESCE(t.arrival_date,t.travel_date)>=? OR COALESCE(f.retroactive,0)=1)",binds:unknown[]=status==='authorized'?[]:[today()];
  if(byId){where+=' AND f.id=?';binds.push(requestId)}else if(byTrip){where+=' AND f.trip_id=?';binds.push(tripId)}else if(status&&status!=='authorized'){where+=' AND f.status=?';binds.push(status)}
- const q=`SELECT f.id,f.trip_id AS tripId,${controlSql('t')},f.liters,f.route_km AS routeKm,f.payment_status AS paymentStatus,f.outstanding_cents AS outstandingCents,COALESCE(f.client_paid,0) AS clientPaid,COALESCE(f.retroactive,0) AS retroactive,f.status,f.created_at AS createdAt,COALESCE(f.registered_at,f.created_at) AS registeredAt,f.authorized_at AS authorizedAt,(SELECT completed.created_at FROM fueling completed WHERE completed.fuel_request_id=f.id ORDER BY completed.created_at DESC LIMIT 1) AS fueledAt,v.label AS vehicleLabel,t.route,t.departure_date AS departureDate,t.arrival_date AS arrivalDate,COALESCE(t.total_value_cents,0) AS totalValueCents,COALESCE(f.requested_by_name,u.name,'Não informado') AS requestedBy,COALESCE(f.authorized_by_name,a.name,'Não informado') AS authorizedBy FROM fuel_requests f JOIN trips t ON t.id=f.trip_id JOIN vehicles v ON v.id=t.vehicle_id LEFT JOIN app_users u ON u.id=f.requested_by LEFT JOIN app_users a ON a.id=f.authorized_by${where} AND ${activeTrip('t')} AND COALESCE(t.fuel_canceled_at,'')='' AND COALESCE(t.no_fueling,0)=0 AND f.status<>'canceled' ORDER BY CASE f.status WHEN 'pending' THEN 0 ELSE 1 END,f.created_at DESC`;
+ const q=`SELECT f.id,f.trip_id AS tripId,${controlSql('t')},f.liters,f.route_km AS routeKm,f.payment_status AS paymentStatus,f.outstanding_cents AS outstandingCents,COALESCE(f.client_paid,0) AS clientPaid,COALESCE(f.retroactive,0) AS retroactive,f.status,f.created_at AS createdAt,COALESCE(f.registered_at,f.created_at) AS registeredAt,f.authorized_at AS authorizedAt,(SELECT completed.created_at FROM fueling completed WHERE completed.vehicle_id=t.vehicle_id AND completed.trip_id=t.id ORDER BY completed.created_at DESC LIMIT 1) AS fueledAt,v.label AS vehicleLabel,t.route,t.departure_date AS departureDate,t.arrival_date AS arrivalDate,COALESCE(t.total_value_cents,0) AS totalValueCents,COALESCE(f.requested_by_name,u.name,'Não informado') AS requestedBy,COALESCE(f.authorized_by_name,a.name,'Não informado') AS authorizedBy FROM fuel_requests f JOIN trips t ON t.id=f.trip_id JOIN vehicles v ON v.id=t.vehicle_id LEFT JOIN app_users u ON u.id=f.requested_by LEFT JOIN app_users a ON a.id=f.authorized_by${where} AND ${activeTrip('t')} AND COALESCE(t.fuel_canceled_at,'')='' AND COALESCE(t.no_fueling,0)=0 AND f.status<>'canceled' ORDER BY CASE f.status WHEN 'pending' THEN 0 ELSE 1 END,f.created_at DESC`;
  const rows=await env.DB!.prepare(q).bind(...binds).all();
  return Response.json({requests:(rows.results||[]).map((item:any)=>canViewFinancial?item:{...item,totalValueCents:null,paymentStatus:null,outstandingCents:null}),canViewFinancial});
 }

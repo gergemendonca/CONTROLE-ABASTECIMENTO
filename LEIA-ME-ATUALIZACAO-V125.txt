@@ -1,0 +1,54 @@
+CONTROLE DE ABASTECIMENTO — ATUALIZAÇÃO v125
+Data: 14/10/2026
+Base: Atualizacao-v124-Quebra-de-Linha-Abastecimentos.zip
+
+OBJETIVO
+O abastecimento inicial acompanha o VEÍCULO físico, não o roteiro originalmente planejado.
+Na troca de veículos, o abastecimento já lançado pode passar para outra viagem
+compatível e a viagem com o veículo substituto volta a 'Pendente de pedido'.
+
+O QUE FOI ALTERADO
+- Regras de transferência no arquivo app/lib/vehicle-fueling-assignment.ts.
+- O histórico preserva veículo, data, hodômetro, litros, valores, operador e
+  autorização original. A mudança de vinculação é auditada, sem criar outro lançamento.
+- Duas ordens de edição suportadas: A antes de B e B antes de A.
+- Pedidos pendentes/autorizados para carro substituído não podem ser reutilizados.
+- Painel ADM, lista de viagens, solicitação, relatórios e histórico passam a
+  considerar o veículo efetivamente abastecido.
+- Proteções contra atribuição duplicada, períodos distantes e viagens iniciadas.
+- Configuração automática da tabela/campo de transferência no D1 (sem apagar dados).
+- Setup automático não apaga dados preexistentes.
+
+REGRAS DE SEGURANÇA
+- Transferência automática somente para viagens ainda não iniciadas por data,
+  com proximidade de até 3 dias entre partidas das viagens, e abastecimento
+  efetuado antes da data de partida do destino.
+- Se houver mais de um abastecimento na viagem, o sistema não movimenta os
+  lançamentos automaticamente (exige conciliação manual).
+- Se houver mais de um destino elegível para o mesmo carro, a edição é interrompida
+  com aviso, em vez de escolher um destino arbitrário.
+- Caso ainda não exista uma viagem elegível para receber o combustível, o
+  abastecimento permanece disponível e identificado como AGUARDANDO REALOCAÇÃO.
+- Abastecimentos complementares e viagens já realizadas não são realocados
+  automaticamente; isso evita alterar indevidamente o histórico de consumo.
+
+TESTES REALIZADOS EM BASE SIMULADA
+- Troca de carros com edição de A antes de B: aprovado.
+- Troca de carros com edição de B antes de A: aprovado.
+- Registros legados com abastecimento ligado apenas ao pedido: aprovado.
+- Proteção ao tentar mover múltiplos abastecimentos: aprovado.
+- Preservação de veículo original, lançamento único e auditoria: aprovado.
+- Sintaxe dos arquivos TypeScript/TSX inspecionada.
+
+INSTALAÇÃO E LIMITES
+Este ZIP contém o código-fonte atualizado que veio na v124, em app/, db/ e
+public/. O arquivo original NÃO incluía package.json, tsconfig.json nem outros
+arquivos da raiz do projeto. Por isso não foi possível executar o build completo
+ou testar em ambiente Cloudflare publicado nesta sessão.
+
+Para instalar, integre o conteúdo ao projeto completo que já contém a
+configuração e dependências, preserve o banco D1 existente e realize um backup
+antes da publicação. A migração de schema é não destrutiva e aplicada pelas
+rotas do aplicativo ao serem utilizadas. Teste em homologação antes da produção.
+
+NÃO EXECUTE comandos de recriação ou exclusão do banco de dados.
