@@ -11,6 +11,9 @@ export const drivers = sqliteTable('drivers', {
 export const fueling = sqliteTable('fueling', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   vehicleId: integer('vehicle_id').notNull().references(() => vehicles.id),
+  originalTripId: integer('original_trip_id'),
+  tripId: integer('trip_id'),
+  fuelRequestId: integer('fuel_request_id'),
   driver: text('driver').notNull(),
   driverId: integer('driver_id').references(() => drivers.id),
   liters: real('liters').notNull(),
@@ -112,4 +115,16 @@ export const tripEnergy=sqliteTable('trip_energy',{
  consumptionKmL:real('consumption_km_l').notNull(),
  updatedByName:text('updated_by_name').notNull(),
  updatedAt:text('updated_at').notNull(),
+});
+
+// Auditoria das trocas: registra a viagem anterior e a viagem de destino.
+export const fuelingReassignments=sqliteTable('fueling_reassignments',{
+ id:integer('id').primaryKey({autoIncrement:true}),
+ fuelingId:integer('fueling_id').notNull().references(()=>fueling.id),
+ vehicleId:integer('vehicle_id').notNull().references(()=>vehicles.id),
+ fromTripId:integer('from_trip_id').references(()=>trips.id),
+ toTripId:integer('to_trip_id').references(()=>trips.id),
+ actorName:text('actor_name').notNull(),
+ changedAt:text('changed_at').notNull(),
+ reason:text('reason').notNull(),
 });

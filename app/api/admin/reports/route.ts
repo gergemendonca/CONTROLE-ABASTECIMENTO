@@ -1,6 +1,7 @@
 import {env} from 'cloudflare:workers';
 import {isAdmin} from '../../admin-auth';
 import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
+import {ensureVehicleFuelAssignment,tripFueledSql} from '@/app/lib/vehicle-fueling-assignment';
 import {activeTrip,ensureTripCancellation} from '@/app/lib/trip-cancellation';
 
 import {ensureFuelingFunding,ensureTripFuelOptions} from '@/app/lib/trip-fuel-options';
@@ -19,7 +20,7 @@ async function ensureClientPaidColumn(){
 export async function GET(req:Request){
  if(!await isAdmin(req))return Response.json({error:'Apenas o administrador pode gerar relatórios.'},{status:403});
  try{
-  await ensureClientPaidColumn();await ensureTripFuelOptions();await ensureFuelingFunding();await ensureTripControl();await ensureTripCancellation();
+  await ensureClientPaidColumn();await ensureTripFuelOptions();await ensureFuelingFunding();await ensureTripControl();await ensureTripCancellation();await ensureVehicleFuelAssignment();
   const url=new URL(req.url);
   const today=new Date().toISOString().slice(0,10);
   const firstOfMonth=`${today.slice(0,7)}-01`;
@@ -38,9 +39,9 @@ export async function GET(req:Request){
      COALESCE(t.departure_date,t.travel_date) AS departureDate,
      COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,
      COALESCE(t.total_km,0) AS totalKm,COALESCE(t.total_value_cents,0) AS totalValueCents,
-     COALESCE((SELECT fr.payment_status FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1),t.payment_status,'nao_pago') AS paymentStatus,
-     COALESCE((SELECT fr.outstanding_cents FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1),t.outstanding_cents,t.total_value_cents,0) AS outstandingCents,
-     CASE WHEN COALESCE(t.no_fueling,0)=1 THEN 'not_required' WHEN COALESCE(t.fuel_canceled_at,'')<>'' THEN 'fuel_canceled' WHEN EXISTS (SELECT 1 FROM fueling completed WHERE completed.trip_id=t.id OR EXISTS (SELECT 1 FROM fuel_requests linked WHERE linked.id=completed.fuel_request_id AND linked.trip_id=t.id)) THEN 'fueled' WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1)='pending' THEN 'pending' WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1)='authorized' THEN 'authorized' ELSE 'missing' END AS status
+     COALESCE((SELECT fr.payment_status FROM fuel_requests fr WHERE fr.trip_id=t.id AND fr.status IN ('pending','authorized') ORDER BY fr.id DESC LIMIT 1),t.payment_status,'nao_pago') AS paymentStatus,
+     COALESCE((SELECT fr.outstanding_cents FROM fuel_requests fr WHERE fr.trip_id=t.id AND fr.status IN ('pending','authorized') ORDER BY fr.id DESC LIMIT 1),t.outstanding_cents,t.total_value_cents,0) AS outstandingCents,
+     CASE WHEN COALESCE(t.no_fueling,0)=1 THEN 'not_required' WHEN COALESCE(t.fuel_canceled_at,'')<>'' THEN 'fuel_canceled' WHEN ${tripFueledSql('t')} THEN 'fueled' WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id AND fr.status IN ('pending','authorized') ORDER BY fr.id DESC LIMIT 1)='pending' THEN 'pending' WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id AND fr.status IN ('pending','authorized') ORDER BY fr.id DESC LIMIT 1)='authorized' THEN 'authorized' ELSE 'missing' END AS status
     FROM trips t JOIN vehicles v ON v.id=t.vehicle_id
     WHERE ${activeTrip('t')} AND COALESCE(t.departure_date,t.travel_date) BETWEEN ? AND ?
     ORDER BY COALESCE(t.departure_date,t.travel_date) DESC,t.id DESC
@@ -51,7 +52,7 @@ export async function GET(req:Request){
    SELECT
     f.id,f.vehicle_id AS vehicleId,v.label AS vehicleLabel,f.driver,f.driver_id AS driverId,
     f.trip_id AS tripId,f.created_at AS createdAt,f.liters,f.amount_cents AS amountCents,
-    COALESCE(t.route,'Roteiro não informado') AS route,${controlSql('t')},
+    COALESCE(t.route,'AGUARDANDO REALOCAÇÃO PARA VIAGEM') AS route,${controlSql('t')},
     COALESCE(t.total_km,0) AS totalKm,COALESCE(t.total_value_cents,0) AS totalValueCents,
     COALESCE(fr.payment_status,'') AS paymentStatus,COALESCE(fr.outstanding_cents,0) AS outstandingCents,COALESCE(f.paid_by_third_party,fr.client_paid,0) AS clientPaid
    FROM fueling f
@@ -68,17 +69,17 @@ export async function GET(req:Request){
     COALESCE(t.departure_date,t.travel_date) AS departureDate,
     COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,
     COALESCE(t.total_km,0) AS totalKm,COALESCE(t.total_value_cents,0) AS totalValueCents,
-    CASE WHEN COALESCE(t.no_fueling,0)=1 THEN 'not_required' WHEN COALESCE(t.fuel_canceled_at,'')<>'' THEN 'fuel_canceled' WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1)='pending' THEN 'pending'
-         WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1)='authorized' THEN CASE WHEN EXISTS (SELECT 1 FROM fueling completed WHERE completed.fuel_request_id=(SELECT fr.id FROM fuel_requests fr WHERE fr.trip_id=t.id ORDER BY fr.id DESC LIMIT 1)) THEN 'fueled' ELSE 'authorized' END
-         WHEN EXISTS (SELECT 1 FROM fueling completed WHERE completed.trip_id=t.id) THEN 'fueled'
+    CASE WHEN COALESCE(t.no_fueling,0)=1 THEN 'not_required' WHEN COALESCE(t.fuel_canceled_at,'')<>'' THEN 'fuel_canceled' WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id AND fr.status IN ('pending','authorized') ORDER BY fr.id DESC LIMIT 1)='pending' THEN 'pending'
+         WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id AND fr.status IN ('pending','authorized') ORDER BY fr.id DESC LIMIT 1)='authorized' THEN CASE WHEN ${tripFueledSql('t')} THEN 'fueled' ELSE 'authorized' END
+         WHEN ${tripFueledSql('t')} THEN 'fueled'
          ELSE 'missing' END AS status
    FROM trips t JOIN vehicles v ON v.id=t.vehicle_id
    WHERE ${activeTrip('t')} AND (EXISTS (
     SELECT 1 FROM fueling completed
-    WHERE (completed.trip_id=t.id OR EXISTS (
+    WHERE completed.vehicle_id=t.vehicle_id AND (completed.trip_id=t.id OR (completed.trip_id IS NULL AND completed.original_trip_id IS NULL AND EXISTS (
       SELECT 1 FROM fuel_requests linked
       WHERE linked.id=completed.fuel_request_id AND linked.trip_id=t.id
-    ))
+    )))
     AND date(completed.created_at,'-3 hours') BETWEEN ? AND ?
    ) OR ((COALESCE(t.fuel_canceled_at,'')<>'' OR COALESCE(t.no_fueling,0)=1) AND COALESCE(t.departure_date,t.travel_date) BETWEEN ? AND ?))
    ORDER BY COALESCE(t.departure_date,t.travel_date) DESC,t.id DESC

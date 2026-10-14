@@ -100,6 +100,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
       setMsg(error.message || "Não foi possível carregar os dados."),
     );
   }, []);
+  useEffect(()=>{if(mode!=="list")return;const notice=window.sessionStorage.getItem("fuelVehicleTransferNotice");if(notice){window.sessionStorage.removeItem("fuelVehicleTransferNotice");setMsg(notice);}},[mode]);
   useEffect(()=>{const id=Number(new URLSearchParams(window.location.search).get("edit"));if(mode!=="new"||queryEditLoaded.current||!Number.isSafeInteger(id)||users.length===0)return;queryEditLoaded.current=true;void fetch(`/api/trips/${id}/full-edit`,{cache:"no-store"}).then(async response=>{const data:any=await response.json();if(!response.ok)throw Error(data.error);edit(data.trip)}).catch((error:Error)=>setMsg(error.message||"Não foi possível abrir a viagem para edição."));},[mode,users]);
   useEffect(()=>{
     const controller=new AbortController();
@@ -263,7 +264,15 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     setConfirmation(null);
     await load();
     if (wasEditing) {
-      setMsg("Viagem atualizada com sucesso.");
+      const notice=data.vehicleChanged
+        ?data.receivedFuelingId
+          ?"Veículo atualizado. O abastecimento inicial foi reconhecido no novo carro. A viagem anterior poderá solicitar abastecimento com o veículo substituto."
+          :data.releasedFuelingId
+            ?"Veículo atualizado. O abastecimento inicial continua com o carro original. Esta viagem só aparecerá abastecida quando o carro substituto receber um abastecimento válido."
+            :"Veículo atualizado. Esta viagem deverá solicitar abastecimento, caso o novo carro ainda não tenha combustível inicial vinculado."
+        :"Viagem atualizada com sucesso.";
+      window.sessionStorage.setItem("fuelVehicleTransferNotice",notice);
+      setMsg(notice);
       const destination=new URLSearchParams(window.location.search).get("return")||"/admin/viagens";
       if(destination.startsWith("/")&&!destination.startsWith("//")){window.location.assign(destination);return;}
       window.location.assign("/admin/viagens");
