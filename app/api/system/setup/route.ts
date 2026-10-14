@@ -1,7 +1,6 @@
 import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
 import {ensureUserPasswordPolicy,isAdmin} from '../../admin-auth';
-import {ensureVehicleFuelAssignment} from '@/app/lib/vehicle-fueling-assignment';
 
 async function loggedPOST(req:Request){
  if(!await isAdmin(req))return Response.json({error:'Apenas administrador.'},{status:403});
@@ -39,9 +38,18 @@ async function loggedPOST(req:Request){
   if(!requestColumns.results.some(column=>column.name==='authorized_by_name'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN authorized_by_name text').run();
   if(!requestColumns.results.some(column=>column.name==='client_paid'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN client_paid integer DEFAULT 0 NOT NULL').run();
   await env.DB!.batch([env.DB!.prepare('CREATE INDEX IF NOT EXISTS fueling_trip_idx ON fueling (trip_id)'),env.DB!.prepare('CREATE INDEX IF NOT EXISTS fueling_request_idx ON fueling (fuel_request_id)')]);
-  // Atualização de produção: jamais apagar registros no setup automático.
-  await ensureUserPasswordPolicy();await ensureVehicleFuelAssignment();
-  return Response.json({ok:true,testDataCleared:false});
+  const resetMarker=await env.DB!.prepare("SELECT value FROM app_settings WHERE key='test_data_reset_v1'").first();
+  if(!resetMarker)await env.DB!.batch([
+   env.DB!.prepare('DELETE FROM fueling_items'),
+   env.DB!.prepare('DELETE FROM fueling'),
+   env.DB!.prepare('DELETE FROM app_notifications'),
+   env.DB!.prepare('DELETE FROM fuel_requests'),
+   env.DB!.prepare('DELETE FROM trip_users'),
+   env.DB!.prepare('DELETE FROM trips'),
+   env.DB!.prepare("INSERT INTO app_settings (key,value) VALUES ('test_data_reset_v1',?)").bind(new Date().toISOString())
+  ]);
+  await ensureUserPasswordPolicy();
+  return Response.json({ok:true,testDataCleared:!resetMarker});
  }catch{return Response.json({error:'Não foi possível preparar a atualização do banco.'},{status:503})}
 }
 
