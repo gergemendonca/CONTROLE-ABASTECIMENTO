@@ -1,0 +1,47 @@
+ATUALIZAÇÃO V128 — LANÇAMENTO DA V106 PELA ROTA DE USUÁRIO
+
+O QUE FOI CORRIGIDO
+
+Havia uma divergência no fluxo de lançamento pelo usuário comum:
+
+1. O app podia identificar uma viagem já encerrada que possuía pedido de
+   abastecimento AUTORIZADO.
+2. Porém, no momento final de salvar o abastecimento, bloqueava a operação
+   somente porque a data de chegada da viagem já havia passado.
+
+Com isso, um pedido autorizado não podia ser concluído pelo motorista/usuário
+na rota normal. Esta é a situação que pode ter impedido o lançamento da V106.
+
+NOVA REGRA
+
+- Usuário comum pode concluir o lançamento de uma viagem já encerrada quando:
+  a) ele estiver associado à viagem;
+  b) houver um pedido de abastecimento autorizado e ainda não utilizado;
+  c) a autorização tiver sido dada nos últimos 5 dias.
+
+- O prazo de 5 dias passa a considerar a data da AUTORIZAÇÃO. Antes, partes
+  do fluxo usavam a data em que o pedido foi criado, o que podia ocultar uma
+  autorização recente de pedido antigo.
+
+- Sem autorização válida, o usuário comum continua bloqueado para lançar
+  abastecimento de viagem encerrada. Assim, não se libera lançamento antigo
+  sem controle.
+
+- Adm e Gerência continuam usando o lançamento retroativo, com informação da
+  data e hora reais do abastecimento.
+
+NÃO ALTERADO
+
+- Troca de carro e vínculo do abastecimento ao veículo.
+- Pedidos, autorizações, WhatsApp e permissões de cada usuário.
+- Regras de quilometragem, duplicidade e abastecimento antecipado.
+
+COMO USAR
+
+1. Suba esta atualização completa sobre a versão atual do app.
+2. Entre com o usuário comum associado à V106.
+3. Abra o lançamento de abastecimento, escolha o carro e a V106.
+4. Conclua normalmente o abastecimento autorizado.
+
+Se a V106 não aparecer, verifique se o pedido está como AUTORIZADO, se ainda
+não foi utilizado e se a autorização ocorreu há no máximo 5 dias.
