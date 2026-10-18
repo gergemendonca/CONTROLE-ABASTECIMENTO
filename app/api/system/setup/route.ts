@@ -1,7 +1,7 @@
 import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
 import {ensureUserPasswordPolicy,isAdmin} from '../../admin-auth';
-import {ensureVehicleFuelAssignment} from '@/app/lib/vehicle-fueling-assignment';
+import {ensureVehicleFuelAssignment,repairLegacyV101ToV109} from '@/app/lib/vehicle-fueling-assignment';
 
 async function loggedPOST(req:Request){
  if(!await isAdmin(req))return Response.json({error:'Apenas administrador.'},{status:403});
@@ -41,7 +41,8 @@ async function loggedPOST(req:Request){
   await env.DB!.batch([env.DB!.prepare('CREATE INDEX IF NOT EXISTS fueling_trip_idx ON fueling (trip_id)'),env.DB!.prepare('CREATE INDEX IF NOT EXISTS fueling_request_idx ON fueling (fuel_request_id)')]);
   // Atualização de produção: jamais apagar registros no setup automático.
   await ensureUserPasswordPolicy();await ensureVehicleFuelAssignment();
-  return Response.json({ok:true,testDataCleared:false});
+  const legacyRepair=await repairLegacyV101ToV109();
+  return Response.json({ok:true,testDataCleared:false,legacyRepair});
  }catch{return Response.json({error:'Não foi possível preparar a atualização do banco.'},{status:503})}
 }
 

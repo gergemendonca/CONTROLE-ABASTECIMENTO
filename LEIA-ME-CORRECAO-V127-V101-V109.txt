@@ -1,0 +1,37 @@
+CONTROLE DE ABASTECIMENTO — CORREÇÃO PONTUAL v127
+Data: 18/10/2026
+Base: Atualizacao-v126-Troca-de-Carro-e-Reenvio-WhatsApp.zip
+
+OBJETIVO EXCLUSIVO
+Corrigir o abastecimento já realizado no carro 2100 (aceita também o cadastro
+21000), que permaneceu ligado à viagem V101 após uma troca ocorrida antes da
+regra de vínculo por veículo. O carro passou para a viagem V109, mas V109 ficou
+indevidamente como “Pendente de pedido de abastecimento”.
+
+O QUE A CORREÇÃO FAZ
+- Localiza exclusivamente V101 e V109 (aceita V101/V-000101 e V109/V-000109).
+- Só continua se a V109 estiver vinculada ao veículo cadastrado como 2100 ou
+  21000 e existir um único abastecimento daquele veículo ainda ligado à V101.
+- Mantém V101 com seu veículo substituto e, portanto, pendente de pedido se o
+  substituto ainda não foi abastecido.
+- Move somente o vínculo operacional do abastecimento para V109.
+- Preserva V101 como origem no histórico e grava auditoria da correção.
+- Não cria abastecimento, não apaga dados e não altera outras viagens.
+
+PROTEÇÕES
+- Se não localizar com precisão as duas viagens, não executa alteração.
+- Se encontrar mais de um abastecimento candidato, não executa alteração.
+- Se a V109 já estiver abastecida, não executa alteração novamente.
+- A correção é idempotente: após aplicada, novas entradas no app não repetem a
+  movimentação.
+
+EXECUÇÃO
+A correção é conferida automaticamente quando um administrador abre o app,
+durante a preparação normal do banco. Depois, atualize a lista de viagens:
+V109 deve aparecer como “Abastecida”, e V101 permanece conforme o abastecimento
+do carro 3100.
+
+VALIDAÇÃO
+O pacote foi conferido quanto à integridade do ZIP. A base recebida não contém
+as dependências/configurações do projeto completo, portanto o build publicado
+deve ser validado antes da implantação.

@@ -25,6 +25,34 @@ export async function ensureVehicleFuelAssignment(){
  )`).run();
 }
 
+/**
+ * Correção única de dados legados: antes da v125, o carro 2100 já abastecido
+ * saiu da V101 e passou para a V109, mas o lançamento permaneceu na V101.
+ * A busca aceita os formatos V101/V-000101 e 2100/21000, mas só executa se
+ * encontrar exatamente uma V101, uma V109 e um único abastecimento candidato.
+ */
+export async function repairLegacyV101ToV109(){
+ await ensureVehicleFuelAssignment();
+ const control=`REPLACE(REPLACE(UPPER(COALESCE(control_number,'')),'-',''),' ','')`;
+ const source=await env.DB!.prepare(`SELECT id FROM trips WHERE (${control} IN ('V101','V000101') OR (COALESCE(control_number,'')='' AND id=101)) AND COALESCE(canceled_at,'')='' ORDER BY id DESC LIMIT 2`).all<{id:number}>();
+ const target=await env.DB!.prepare(`SELECT t.id,t.vehicle_id AS vehicleId,v.label AS vehicleLabel FROM trips t JOIN vehicles v ON v.id=t.vehicle_id WHERE (${control.replace('control_number','t.control_number')} IN ('V109','V000109') OR (COALESCE(t.control_number,'')='' AND t.id=109)) AND COALESCE(t.canceled_at,'')='' ORDER BY t.id DESC LIMIT 2`).all<{id:number;vehicleId:number;vehicleLabel:string}>();
+ if(source.results.length!==1||target.results.length!==1)return {status:'not_found' as const};
+ const fromTrip=source.results[0],toTrip=target.results[0];
+ if(!['2100','21000'].includes(String(toTrip.vehicleLabel).trim()))return {status:'vehicle_mismatch' as const};
+ const already=await env.DB!.prepare('SELECT id FROM fueling WHERE vehicle_id=? AND trip_id=? LIMIT 1').bind(toTrip.vehicleId,toTrip.id).first<{id:number}>();
+ if(already)return {status:'already_fixed' as const,fuelingId:already.id};
+ const candidates=await env.DB!.prepare(`SELECT id FROM fueling WHERE vehicle_id=? AND (trip_id=? OR (trip_id IS NULL AND original_trip_id IS NULL AND fuel_request_id IN (SELECT id FROM fuel_requests WHERE trip_id=?))) ORDER BY created_at ASC,id ASC LIMIT 2`).bind(toTrip.vehicleId,fromTrip.id,fromTrip.id).all<{id:number}>();
+ if(candidates.results.length===0)return {status:'no_candidate' as const};
+ if(candidates.results.length>1)return {status:'ambiguous' as const};
+ const fuel=candidates.results[0],now=new Date().toISOString();
+ await env.DB!.batch([
+  env.DB!.prepare(`UPDATE fueling SET original_trip_id=COALESCE(original_trip_id,trip_id,(SELECT trip_id FROM fuel_requests WHERE id=fuel_request_id)),trip_id=? WHERE id=? AND vehicle_id=?`).bind(toTrip.id,fuel.id,toTrip.vehicleId),
+  env.DB!.prepare('INSERT INTO fueling_reassignments (fueling_id,vehicle_id,from_trip_id,to_trip_id,actor_name,changed_at,reason) VALUES (?,?,?,?,?,?,?)').bind(fuel.id,toTrip.vehicleId,fromTrip.id,toTrip.id,'Correção v127',now,'Correção pontual: abastecimento do carro 2100 passou da V101 para a V109'),
+  env.DB!.prepare("UPDATE fuel_requests SET status='reassigned' WHERE id=(SELECT fuel_request_id FROM fueling WHERE id=?) AND status='authorized'").bind(fuel.id)
+ ]);
+ return {status:'applied' as const,fuelingId:fuel.id};
+}
+
 // A ligação por pedido só é usada para lançamentos LEGADOS que não tinham trip_id;
 // um combustível destacado por troca de carro NÃO deve marcar a antiga viagem.
 export const tripFueledSql=(alias='t')=>`EXISTS (
