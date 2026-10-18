@@ -1,0 +1,39 @@
+CORREÇÃO V129 — V101 / V109 / VEÍCULO 21000
+
+FINALIDADE
+
+Corrigir somente o abastecimento antigo do carro 21000:
+
+- ele foi lançado para a V101;
+- depois o carro 21000 foi realocado para a V109;
+- a V101 ficou com o carro 31000 e recebeu outro abastecimento próprio.
+
+RESULTADO ESPERADO APÓS A ATUALIZAÇÃO
+
+- V109: status ABASTECIDO, pelo abastecimento já existente do carro 21000.
+- V101: continua vinculada ao carro 31000 e ao abastecimento próprio dele.
+- Nenhum lançamento é apagado.
+
+O QUE A CORREÇÃO FAZ
+
+Na primeira consulta normal do aplicativo após a atualização, o sistema:
+
+1. Localiza V101 e V109 pelo número da viagem (ou pelo controle cadastrado).
+2. Confirma que as duas estão com veículos diferentes.
+3. Busca exclusivamente o abastecimento feito no veículo atualmente ligado à
+   V109 e que ainda está ligado à V101.
+4. Reassocia somente esse lançamento à V109, preservando V101 como viagem de
+   origem no histórico.
+5. Grava uma auditoria da correção. Nas consultas seguintes não repete nada.
+
+PROTEÇÕES
+
+- Se V109 já estiver abastecida, a atualização não modifica registros.
+- Se não encontrar exatamente esse abastecimento legado, não altera nada.
+- O abastecimento do carro 31000 na V101 não é selecionado, pois pertence a
+  outro veículo.
+
+APÓS SUBIR
+
+Abra a lista de viagens ou atualize a tela do Adm. A primeira leitura do app
+executará a correção; V109 deve passar a aparecer como ABASTECIDA.

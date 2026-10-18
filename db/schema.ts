@@ -91,6 +91,7 @@ export const fuelRequests=sqliteTable('fuel_requests',{
  paymentStatus:text('payment_status').notNull(),
  outstandingCents:integer('outstanding_cents').notNull().default(0),
  clientPaid:integer('client_paid').notNull().default(0),
+  extraordinary:integer('extraordinary').notNull().default(0),
  status:text('status').notNull().default('pending'),
  createdAt:text('created_at').notNull(),
  authorizedBy:integer('authorized_by').references(()=>appUsers.id),

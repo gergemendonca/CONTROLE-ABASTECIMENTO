@@ -1,0 +1,41 @@
+ATUALIZAÇÃO V131 — ABASTECIMENTO EXTRAORDINÁRIO
+
+FINALIDADE
+
+Permitir um novo pedido de combustível quando a viagem já recebeu o
+abastecimento inicial, mas ainda está em curso.
+
+ACESSO
+
+- O botão existe somente dentro da Área Adm:
+  Área Adm > Solicitar abastecimento > SOLICITAR ABASTECIMENTO EXTRAORDINÁRIO.
+- Apenas usuários dos grupos Adm e Gerência podem abrir, selecionar viagens ou
+  salvar esse tipo de pedido. O bloqueio também é aplicado no servidor.
+
+REGRAS PARA A LISTA
+
+O caminho extraordinário mostra somente viagens que:
+
+1. ainda estão entre a data de saída e a data de chegada;
+2. já possuem abastecimento inicial efetivamente lançado;
+3. não têm outro pedido pendente ou autorizado que ainda não tenha sido usado;
+4. não foram canceladas e não foram marcadas como viagem sem abastecimento.
+
+FLUXO
+
+1. Adm/Gerência seleciona uma viagem em curso.
+2. Informa litros e situação de pagamento na mesma tela usada no pedido normal.
+3. O pedido é gravado como EXTRAORDINÁRIO e o WhatsApp é aberto normalmente.
+4. Na tela de autorização, o pedido aparece com aviso vermelho:
+   “ABASTECIMENTO EXTRAORDINÁRIO — viagem em curso”.
+5. Após autorização, ele permanece visível até ser utilizado no lançamento do
+   abastecimento correspondente.
+
+CORREÇÃO COMPLEMENTAR
+
+Pedidos autorizados que já foram usados deixam de bloquear um novo pedido.
+Antes, o sistema mantinha o status “autorizado” e interpretava esse pedido
+antigo como se ainda estivesse aberto.
+
+Esta versão inclui todas as regras e correções da atualização v130, inclusive
+a correção pontual da V109.

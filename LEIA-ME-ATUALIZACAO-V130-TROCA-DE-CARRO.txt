@@ -1,0 +1,46 @@
+ATUALIZAÇÃO V130 — TROCA DE CARRO COM ABASTECIMENTO SEGURO
+
+Esta versão inclui também a correção pontual já solicitada para a V109:
+o abastecimento físico do carro 21000, lançado originalmente para a V101,
+passa a acompanhar o carro na V109. O abastecimento do carro 31000 na V101
+não é alterado.
+
+NOVA REGRA PRINCIPAL
+- Abastecimento físico acompanha o carro.
+- Pedido de abastecimento ainda não utilizado permanece na viagem.
+- Assim, quando um carro sai de uma viagem sem ter recebido abastecimento,
+  o pedido já gerado continua disponível para o carro substituto.
+- Quando o carro que entra já possui abastecimento e a viagem anterior dele
+  não aconteceu, o abastecimento é transferido para a viagem atual e pedidos
+  em aberto que ficariam duplicados são cancelados.
+
+CADASTRO DE NOVA VIAGEM COM CARRO EM CONFLITO
+Ao escolher um carro que já está em uma viagem no mesmo período, o sistema
+mostra duas escolhas:
+
+1. Usar o carro nas duas viagens
+   Mantém as duas viagens com o mesmo carro. Nenhum combustível é transferido
+   automaticamente.
+
+2. Usar o carro somente nesta viagem
+   Antes de permitir salvar, o sistema obriga a informar o carro que ficará
+   na viagem anterior. Portanto a viagem anterior nunca é salva sem carro.
+   Se houver combustível no histórico de qualquer carro envolvido, o sistema
+   pergunta se a viagem anterior aconteceu antes de decidir transferir ou
+   solicitar novo abastecimento.
+
+PROTEÇÕES ADICIONAIS
+- O carro substituto não pode estar ocupado no período da viagem anterior.
+- A troca só vale entre viagens que se sobrepõem no período.
+- Conflito de motorista continua exigindo confirmação separada.
+- Se houver mais de um abastecimento a conciliar, a operação é bloqueada sem
+  deixar uma nova viagem incompleta gravada.
+
+COMO ATIVAR A CORREÇÃO DA V109
+Após publicar a atualização, acesse ou atualize qualquer tela de viagens ou
+o painel administrativo. A conciliação é automática e única. A V109 deverá
+aparecer como abastecida, pois o carro 21000 já estava abastecido.
+
+OBSERVAÇÃO
+Esta atualização substitui os pacotes anteriores v128 e v129: ela já contém
+as respectivas correções.
