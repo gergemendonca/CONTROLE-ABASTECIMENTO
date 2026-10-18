@@ -38,6 +38,7 @@ async function loggedPOST(req:Request){
   if(!requestColumns.results.some(column=>column.name==='requested_by_name'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN requested_by_name text').run();
   if(!requestColumns.results.some(column=>column.name==='authorized_by_name'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN authorized_by_name text').run();
   if(!requestColumns.results.some(column=>column.name==='client_paid'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN client_paid integer DEFAULT 0 NOT NULL').run();
+  if(!requestColumns.results.some(column=>column.name==='extraordinary'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN extraordinary integer DEFAULT 0 NOT NULL').run();
   await env.DB!.batch([env.DB!.prepare('CREATE INDEX IF NOT EXISTS fueling_trip_idx ON fueling (trip_id)'),env.DB!.prepare('CREATE INDEX IF NOT EXISTS fueling_request_idx ON fueling (fuel_request_id)')]);
   // Atualização de produção: jamais apagar registros no setup automático.
   await ensureUserPasswordPolicy();await ensureVehicleFuelAssignment();

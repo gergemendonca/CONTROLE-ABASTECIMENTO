@@ -1,0 +1,29 @@
+ATUALIZAÇÃO V132 — CORREÇÃO DA V109 E ORGANIZAÇÃO DA ÁREA ADM
+
+CORREÇÃO PONTUAL DA V109
+
+- Corrige a transferência do abastecimento já realizado pelo carro 21000,
+  originalmente relacionado à V101, para a V109.
+- A busca agora reconhece também o histórico registrado por atualizações
+  anteriores (original_trip_id). Era esse caso que impedia a correção de rodar.
+- A V101 e o abastecimento próprio do carro 31000 não são alterados.
+- Caso exista na V109 um pedido pendente/autorizado que nunca foi utilizado,
+  ele é cancelado porque o carro já chega abastecido. Nenhum abastecimento
+  físico é apagado.
+- A correção roda automaticamente na primeira consulta de viagens após subir
+  esta versão. Atualize a tela da Área Adm ou abra Lista de viagens.
+
+BOTÕES DA ÁREA ADM
+
+A sequência foi organizada assim:
+
+1. Nova viagem
+2. Editar viagens
+3. Solicitar abastecimento
+4. Reenviar pedido WhatsApp
+5. Abastecimento extraordinário
+6. Lista de viagens
+
+O botão de abastecimento extraordinário agora está visível diretamente no
+painel Área Adm e continua com proteção no servidor: somente Adm ou Gerência
+pode abrir a lista e criar o pedido extraordinário.

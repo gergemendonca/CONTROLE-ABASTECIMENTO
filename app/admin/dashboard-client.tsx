@@ -3,9 +3,10 @@
 const cards=[
   {label:'Nova viagem',icon:'🚚',color:'bg-[#1677d8] text-white',href:'/admin/viagens/nova'},
   {label:'Editar viagens',icon:'✎',color:'bg-[#7441c8] text-white',href:'/admin/viagens'},
-  {label:'Reenviar pedido WhatsApp',icon:'↗',color:'bg-[#178045] text-white',href:'/admin/reenvio-whatsapp'},
-  {label:'Lista de viagens',icon:'▤',color:'bg-[#5636a3] text-white',href:'/admin/lista-viagens'},
   {label:'Solicitar abastecimento',icon:'⛽',color:'bg-[#0b7184] text-white',href:'/solicitar-abastecimento?origem=adm'},
+  {label:'Reenviar pedido WhatsApp',icon:'↗',color:'bg-[#178045] text-white',href:'/admin/reenvio-whatsapp'},
+  {label:'Abastecimento extraordinário',icon:'⛽+',color:'bg-[#b3262b] text-white',href:'/solicitar-abastecimento?origem=adm&extraordinario=1'},
+  {label:'Lista de viagens',icon:'▤',color:'bg-[#5636a3] text-white',href:'/admin/lista-viagens'},
   {label:'AUTORIZAR',icon:'✓',color:'bg-[#c9272c] text-white',href:'/pedidos?status=pending',prominent:true},
   {label:'Pendências',icon:'!',color:'bg-[#f5b51b] text-[#2c2509]',href:'/pedidos?status=pending'},
   {label:'Autorizados',icon:'✓',color:'bg-[#188145] text-white',href:'/pedidos?status=authorized'},
