@@ -32,6 +32,8 @@ type AppUser = {
 };
 type Confirmation = { messages: string[]; hasConflict: boolean };
 type LiveConflict = { kind: "vehicle" | "drivers" | "duplicate"; key: string; message: string; driverIds?: number[] };
+type PreviousTrip={id:number;vehicleLabel:string;route:string;departureDate:string;arrivalDate:string;hasFueling:number};
+type FuelDecision={previousTripId:number;previousTripOccurred:boolean;newFuelingIntent?:'request'|'skip'};
 const decimal=(value:string)=>{const clean=value.trim();return Number(clean.includes(",")?clean.replace(/\./g,"").replace(",","."):clean)};
 const formatDate = (date: string) => date.split("-").reverse().join("/");
 const tripStatus = (status?: Trip["requestStatus"]) => {
@@ -70,10 +72,15 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     [externalDriverNames,setExternalDriverNames]=useState<string[]>([]),
     [externalDriverName,setExternalDriverName]=useState(""),
     [editing, setEditing] = useState<number | null>(null),
+    [editingVehicleId,setEditingVehicleId]=useState<number|null>(null),
     [confirmId, setConfirmId] = useState<number | null>(null),
     [cancelReason,setCancelReason]=useState(""),
     [confirmation, setConfirmation] = useState<Confirmation | null>(null),
     [liveConflict, setLiveConflict] = useState<LiveConflict | null>(null),
+    [previousTrip,setPreviousTrip]=useState<PreviousTrip|null>(null),
+    [previousTripOccurred,setPreviousTripOccurred]=useState<boolean|null>(null),
+    [fuelDecision,setFuelDecision]=useState<FuelDecision|null>(null),
+    [checkingVehicleHistory,setCheckingVehicleHistory]=useState(false),
     [acceptedConflicts, setAcceptedConflicts] = useState<string[]>([]),
     [msg, setMsg] = useState("");
   async function load() {
@@ -136,10 +143,15 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     setExternalDriverNames([]);
     setExternalDriverName("");
     setEditing(null);
+    setEditingVehicleId(null);
     setConfirmId(null);
     setCancelReason("");
     setConfirmation(null);
     setLiveConflict(null);
+    setPreviousTrip(null);
+    setPreviousTripOccurred(null);
+    setFuelDecision(null);
+    setCheckingVehicleHistory(false);
     setAcceptedConflicts([]);
   }
   function overlapping(trip: Trip) {
@@ -176,7 +188,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
       return;
     }
   }
-  function confirmDates() {
+  function finishDatesConfirmation() {
     if (!car || !departureDate || !arrivalDate || arrivalDate < departureDate) {
       setMsg("Selecione o veículo e informe corretamente a saída e a chegada antes de confirmar as datas.");
       return;
@@ -189,6 +201,18 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     }
     setDatesConfirmed(true);
     setMsg("Carro e datas aceitos ✓ Agora informe os demais dados da viagem.");
+  }
+  async function confirmDates() {
+    if (!car || !departureDate || !arrivalDate || arrivalDate < departureDate || (editing!==null&&Number(car)===editingVehicleId)) return finishDatesConfirmation();
+    try{
+      setCheckingVehicleHistory(true);
+      const response=await fetch(`/api/vehicle-fuel-context?vehicleId=${encodeURIComponent(car)}&excludeTripId=${encodeURIComponent(editing||0)}&referenceDate=${encodeURIComponent(departureDate)}`,{cache:'no-store'}),data:any=await response.json();
+      if(!response.ok)throw Error(data.error||'Não foi possível verificar o histórico do veículo.');
+      const trip=data.previousTrip as PreviousTrip|null;
+      if(trip&&fuelDecision?.previousTripId!==trip.id){setPreviousTrip(trip);return;}
+      finishDatesConfirmation();
+    }catch(error){setMsg(error instanceof Error?error.message:'Não foi possível verificar o histórico do veículo.');}
+    finally{setCheckingVehicleHistory(false);}
   }
   useEffect(() => {
     if (!datesConfirmed || !selectedDriverIds.length || liveConflict) return;
@@ -254,6 +278,9 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
           paymentStatus,
           outstandingCents,
           allowConflicts,
+          previousTripId:fuelDecision?.previousTripId,
+          previousTripOccurred:fuelDecision?.previousTripOccurred,
+          newFuelingIntent:fuelDecision?.newFuelingIntent,
         }),
       }),
       data: any = await response.json();
@@ -279,13 +306,11 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
       return;
     }
     clear();
-    setMsg(
-      "Viagem salva com sucesso. O formulário foi limpo para iniciar outro cadastro.",
-    );
+    setMsg(data.receivedFuelingId?"Viagem salva. Como a viagem anterior não aconteceu, o abastecimento já registrado acompanhou este carro; não é necessário solicitar novamente.":noFueling?"Viagem salva sem solicitação de abastecimento. O formulário foi limpo para iniciar outro cadastro.":"Viagem salva com sucesso. O formulário foi limpo para iniciar outro cadastro.");
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
   }
   function edit(trip: Trip) {
-    setEditing(trip.id);setNoFueling(Number(trip.noFueling)===1);setOriginalLiters(trip.plannedLiters??null);setPlannedLiters(trip.plannedLiters==null?"":String(trip.plannedLiters).replace(".",","));
+    setEditing(trip.id);setEditingVehicleId(trip.vehicleId);setNoFueling(Number(trip.noFueling)===1);setOriginalLiters(trip.plannedLiters??null);setPlannedLiters(trip.plannedLiters==null?"":String(trip.plannedLiters).replace(".",","));
     setCar(String(trip.vehicleId));
     setDepartureDate(trip.departureDate);
     setArrivalDate(trip.arrivalDate);
@@ -323,7 +348,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
   return (
     <main className="min-h-screen bg-[#f3f6f9] p-5">
       <div className="mx-auto max-w-xl">
-        <div className="mb-5 grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => window.location.assign("/admin")} className="h-14 rounded-xl border-2 border-slate-500 bg-white px-3 text-lg font-bold text-slate-700">Voltar para Área Adm</button>{mode !== "list"&&<button type="button" onClick={() => window.location.assign("/admin/viagens")} className="h-14 rounded-xl border-2 border-[#1677d8] bg-white px-3 text-lg font-bold text-[#1677d8]">Abastecimentos</button>}</div>
+        <div className="mb-5 grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => window.location.assign("/admin")} className="h-14 rounded-xl border-2 border-slate-500 bg-white px-3 text-lg font-bold text-slate-700">Voltar para Área Adm</button>{mode !== "list"&&<button type="button" onClick={() => window.location.assign("/admin/viagens")} className="h-14 rounded-xl border-2 border-[#1677d8] bg-white px-3 text-lg font-bold text-[#1677d8]">Editar viagens</button>}</div>
         {mode !== "list" && <>
         <section
           ref={formSectionRef}
@@ -338,7 +363,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
               Veículo
               <select
                 value={car}
-                onChange={(event) => { setCar(event.target.value); setDatesConfirmed(false); setAcceptedConflicts([]); }}
+                onChange={(event) => { setCar(event.target.value); setDatesConfirmed(false); setAcceptedConflicts([]); setFuelDecision(null); setPreviousTrip(null); setPreviousTripOccurred(null); }}
                 required
                 className="mt-2 h-16 w-full rounded-xl border p-3 text-2xl"
               >
@@ -364,6 +389,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                     setDepartureDate(event.target.value);
                     setDatesConfirmed(false);
                     setAcceptedConflicts([]);
+                    setFuelDecision(null);setPreviousTrip(null);setPreviousTripOccurred(null);
                     if (arrivalDate < event.target.value)
                       setArrivalDate(event.target.value);
                   }}
@@ -376,13 +402,13 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                   type="date"
                   min={departureDate}
                   value={arrivalDate}
-                  onChange={(event) => { setArrivalDate(event.target.value); setDatesConfirmed(false); setAcceptedConflicts([]); }}
+                  onChange={(event) => { setArrivalDate(event.target.value); setDatesConfirmed(false); setAcceptedConflicts([]); setFuelDecision(null);setPreviousTrip(null);setPreviousTripOccurred(null); }}
                   className="mt-2 h-16 min-w-0 w-full rounded-xl border p-3 text-lg"
                 />
               </label>
             </div>
             <button type="button" onClick={confirmDates} className={`min-h-12 w-full rounded-xl border-2 px-4 py-2 text-lg font-bold ${datesConfirmed ? "border-[#178045] bg-[#178045] text-white" : "border-[#1677d8] bg-[#eaf4ff] text-[#075a9f]"}`}>
-              {datesConfirmed ? "✓ Carro e datas aceitos" : "Confirmar carro e datas"}
+              {checkingVehicleHistory ? "Verificando histórico do carro..." : datesConfirmed ? "✓ Carro e datas aceitos" : "Confirmar carro e datas"}
             </button>
             <label className="block text-lg font-bold">
               Quilometragem total da viagem
@@ -498,6 +524,17 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
           )}
         </section>
         </>}
+        {previousTrip && (
+          <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-5">
+            <section role="dialog" aria-modal="true" className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
+              <div className="flex items-center gap-3 rounded-2xl bg-amber-50 p-4 text-[#8a5600]"><span aria-hidden="true" className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#d38b00] text-3xl font-black text-white">!</span><h2 className="text-2xl font-extrabold leading-tight">HISTÓRICO DO CARRO</h2></div>
+              <p className="mt-4 text-lg font-bold text-slate-800">Este carro já está cadastrado em outra viagem:</p>
+              <div className="mt-3 rounded-xl border-2 border-amber-300 bg-amber-50 p-4 text-lg"><p className="font-extrabold">{previousTrip.vehicleLabel}</p><p className="mt-1">{previousTrip.route}</p><p className="mt-2 text-base">Período: {formatDate(previousTrip.departureDate)} a {formatDate(previousTrip.arrivalDate)}</p>{Number(previousTrip.hasFueling)===1&&<p className="mt-3 rounded-lg bg-sky-100 px-3 py-2 text-base font-extrabold text-sky-900">Este carro possui abastecimento registrado para essa viagem.</p>}</div>
+              {previousTripOccurred!==true?<><p className="mt-5 text-xl font-extrabold text-slate-900">Essa viagem aconteceu?</p><p className="mt-2 text-base text-slate-600">A resposta define se o abastecimento já registrado continua disponível para este carro.</p><div className="mt-6 grid gap-3 sm:grid-cols-2"><button type="button" onClick={()=>setPreviousTripOccurred(true)} className="min-h-14 rounded-xl bg-[#178045] px-4 py-2 text-lg font-bold text-white">Sim, aconteceu</button><button type="button" onClick={()=>{setFuelDecision({previousTripId:previousTrip.id,previousTripOccurred:false});setNoFueling(false);setPreviousTrip(null);setPreviousTripOccurred(null);finishDatesConfirmation();}} className="min-h-14 rounded-xl border-2 border-[#096a9b] bg-white px-4 py-2 text-lg font-bold text-[#075579]">Não, não aconteceu</button></div></>:<><p className="mt-5 text-xl font-extrabold text-slate-900">Haverá novo abastecimento para esta viagem?</p><p className="mt-2 text-base text-slate-600">Como a viagem anterior aconteceu, o combustível dela não será reaproveitado.</p><div className="mt-6 grid gap-3 sm:grid-cols-2"><button type="button" onClick={()=>{setFuelDecision({previousTripId:previousTrip.id,previousTripOccurred:true,newFuelingIntent:'request'});setNoFueling(false);setPreviousTrip(null);setPreviousTripOccurred(null);finishDatesConfirmation();}} className="min-h-14 rounded-xl bg-[#178045] px-4 py-2 text-lg font-bold text-white">Sim, solicitar abastecimento</button><button type="button" onClick={()=>{setFuelDecision({previousTripId:previousTrip.id,previousTripOccurred:true,newFuelingIntent:'skip'});setNoFueling(true);setPreviousTrip(null);setPreviousTripOccurred(null);finishDatesConfirmation();}} className="min-h-14 rounded-xl border-2 border-[#b3262b] bg-white px-4 py-2 text-lg font-bold text-[#b3262b]">Não, seguir sem abastecimento</button></div></>}
+              <button type="button" onClick={()=>{setPreviousTrip(null);setPreviousTripOccurred(null);setCar('');setDatesConfirmed(false);setMsg('Selecione outro carro ou revise a viagem anterior.');}} className="mt-4 min-h-12 w-full rounded-xl border px-4 py-2 text-base font-bold text-slate-700">Cancelar e alterar carro</button>
+            </section>
+          </div>
+        )}
         {confirmation && (
           <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-5">
             <section

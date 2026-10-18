@@ -1,0 +1,55 @@
+CONTROLE DE ABASTECIMENTO — ATUALIZAÇÃO v126
+Data: 18/10/2026
+Base: Atualizacao-v125-Abastecimento-Vinculado-ao-Carro.zip
+
+OBJETIVO
+Simplificar a troca de veículo para usuários leigos e impedir que o sistema
+presuma sozinho o consumo do combustível. O abastecimento físico continua
+pertencendo ao carro.
+
+TROCA DE CARRO E ABASTECIMENTO
+- Ao escolher um carro que já possui viagem anterior cadastrada, o app mostra
+  a viagem, o período e informa se há abastecimento registrado.
+- O usuário responde: “Essa viagem aconteceu?”.
+- Se NÃO aconteceu, o app consulta o banco: se o carro foi abastecido, o
+  abastecimento acompanha o carro para a nova viagem; se não foi abastecido,
+  a nova viagem fica livre para solicitação.
+- Se SIM aconteceu, o app pergunta se haverá novo abastecimento. A resposta
+  “Sim” deixa a nova viagem pronta para solicitar. A resposta “Não” registra
+  a viagem como sem solicitação de abastecimento.
+- A regra antiga de reaproveitar ou bloquear combustível automaticamente por
+  diferença de dias foi removida. Não há mais decisão automática por prazo.
+- O histórico e a auditoria da realocação são preservados. Havendo mais de um
+  abastecimento na viagem anterior, o sistema interrompe a transferência e
+  exige conferência manual, protegendo os abastecimentos complementares.
+
+ÁREA ADM
+- O botão “Abastecimentos” foi renomeado para “Editar viagens”.
+- Foi criado o botão “Reenviar pedido WhatsApp”.
+- A nova tela lista pedidos pendentes ou autorizados solicitados nos últimos
+  5 dias, da data mais recente para a mais antiga.
+- Cada pedido possui o botão “Reenviar pedido pelo WhatsApp”, que abre uma
+  mensagem pronta. O sistema não envia mensagens automaticamente.
+
+ARQUIVOS PRINCIPAIS ALTERADOS
+- app/admin/admin-client.tsx
+- app/admin/dashboard-client.tsx
+- app/admin/reenvio-whatsapp/page.tsx
+- app/api/vehicle-fuel-context/route.ts
+- app/api/fuel-requests/recent/route.ts
+- app/api/trips/route.ts
+- app/api/trips/[id]/full-edit/route.ts
+- app/lib/vehicle-fueling-assignment.ts
+
+VALIDAÇÃO
+Este pacote foi inspecionado para consistência de rotas, chamadas e sintaxe
+dos trechos TypeScript/TSX modificados. O ZIP-base não contém package.json,
+tsconfig.json nem dependências; por isso não foi possível executar o build
+completo nesta sessão. Antes de publicar, aplique no projeto completo e teste:
+1. troca de carro com viagem anterior realizada;
+2. troca de carro com viagem anterior não realizada e carro abastecido;
+3. troca de carro com viagem anterior não realizada e sem abastecimento;
+4. reenvio de pedido pendente e autorizado no WhatsApp.
+
+NÃO APAGUE OU RECRIE O BANCO DE DADOS. As alterações de banco são aditivas e
+preservam o histórico existente.

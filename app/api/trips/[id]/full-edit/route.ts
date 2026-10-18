@@ -7,7 +7,7 @@ import {activeTrip,ensureTripCancellation} from '@/app/lib/trip-cancellation';
 
 type Context={params:Promise<{id:string}>};
 import {restoredLiters} from '@/app/lib/trip-fuel-options';
-type Input={noFueling?:boolean;plannedLiters?:number|null;vehicleId:number;departureDate:string;arrivalDate:string;route:string;totalKm:number;totalValueCents:number;associatedUserIds:number[];externalDriverNames?:string[];paymentStatus:'total'|'parcial'|'nao_pago';outstandingCents:number;allowConflicts?:boolean};
+type Input={noFueling?:boolean;plannedLiters?:number|null;vehicleId:number;departureDate:string;arrivalDate:string;route:string;totalKm:number;totalValueCents:number;associatedUserIds:number[];externalDriverNames?:string[];paymentStatus:'total'|'parcial'|'nao_pago';outstandingCents:number;allowConflicts?:boolean;previousTripId?:number|null;previousTripOccurred?:boolean|null;newFuelingIntent?:'request'|'skip'|null};
 const dateOk=(value:string)=>/^\d{4}-\d{2}-\d{2}$/.test(value);
 const today=()=>{const parts=new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Bahia',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());const field=(name:string)=>parts.find(part=>part.type===name)?.value||'';return `${field('year')}-${field('month')}-${field('day')}`};
 const paymentOk=(value:string)=>value==='total'||value==='parcial'||value==='nao_pago';
@@ -28,7 +28,8 @@ async function loggedPUT(req:Request,{params}:Context){
   const previous=await env.DB!.prepare(`SELECT t.id,t.vehicle_id AS vehicleId,COALESCE(t.departure_date,t.travel_date) AS departureDate,COALESCE(t.no_fueling,0) AS noFueling,COALESCE(t.planned_liters,(SELECT liters FROM fuel_requests fr WHERE fr.trip_id=t.id AND fr.status IN ('pending','authorized') ORDER BY fr.id DESC LIMIT 1)) AS plannedLiters FROM trips t WHERE t.id=? AND ${activeTrip('t')}`).bind(id).first<{id:number;vehicleId:number;departureDate:string;noFueling:number;plannedLiters:number|null}>();
   if(!previous)return Response.json({error:'Viagem não encontrada ou cancelada.'},{status:404});
   if(input.noFueling!==undefined&&typeof input.noFueling!=='boolean')return Response.json({error:'Informe se a viagem terá abastecimento.'},{status:400});
-  const planned=restoredLiters(input.plannedLiters,previous.plannedLiters),noFueling=input.noFueling===undefined?previous.noFueling:input.noFueling?1:0;
+  if(input.previousTripOccurred===true&&input.newFuelingIntent!=='request'&&input.newFuelingIntent!=='skip')return Response.json({error:'Informe se haverá novo abastecimento após a viagem anterior realizada.'},{status:400});
+  const planned=restoredLiters(input.plannedLiters,previous.plannedLiters),noFueling=input.previousTripOccurred===true&&input.newFuelingIntent==='skip'?1:input.noFueling===undefined?previous.noFueling:input.noFueling?1:0;
   if(planned===undefined)return Response.json({error:'Informe uma quantidade válida de litros.'},{status:400});
   const total=input.totalValueCents;
   if(input.paymentStatus==='total'&&input.outstandingCents!==0)return Response.json({error:'Viagem totalmente paga não pode ter valor em aberto.'},{status:400});
@@ -38,7 +39,7 @@ async function loggedPUT(req:Request,{params}:Context){
   if(vehicleBusy&&!input.allowConflicts)return Response.json({error:'Há conflito de horário para este carro. Confirme a compatibilidade antes de salvar.'},{status:409});
   const automatic=await env.DB!.prepare("SELECT id FROM app_users WHERE active=1 AND group_name IN ('adm','gerencia')").all<{id:number}>();
   const userIds=[...new Set([...input.associatedUserIds,...automatic.results.map(user=>user.id)])],guests=externalNames(input);
-  const transfer=await planVehicleFuelTransfer({tripId:id,previousVehicleId:previous.vehicleId,vehicleId:input.vehicleId,previousDepartureDate:previous.departureDate,departureDate:input.departureDate,actorName:session.name,noFueling:!!noFueling});
+  const transfer=await planVehicleFuelTransfer({tripId:id,previousVehicleId:previous.vehicleId,vehicleId:input.vehicleId,previousDepartureDate:previous.departureDate,departureDate:input.departureDate,actorName:session.name,noFueling:!!noFueling,previousTripId:input.previousTripId,previousTripOccurred:input.previousTripOccurred,newFuelingIntent:input.newFuelingIntent});
   const latestRequest=transfer.vehicleChanged?null:await env.DB!.prepare('SELECT id FROM fuel_requests WHERE trip_id=? AND status=\'pending\' ORDER BY id DESC LIMIT 1').bind(id).first<{id:number}>();
   const statements=[env.DB!.prepare(`UPDATE trips SET vehicle_id=?,travel_date=?,departure_date=?,arrival_date=?,route=?,total_km=?,total_value_cents=?,no_fueling=?,planned_liters=?,payment_status=?,outstanding_cents=? WHERE id=? AND ${activeTrip('trips')}`).bind(input.vehicleId,input.departureDate,input.departureDate,input.arrivalDate,input.route.trim(),input.totalKm,total,noFueling,planned,input.paymentStatus,input.outstandingCents,id),env.DB!.prepare('DELETE FROM trip_users WHERE trip_id=?').bind(id),env.DB!.prepare('DELETE FROM trip_external_drivers WHERE trip_id=?').bind(id),...userIds.map(userId=>env.DB!.prepare('INSERT OR IGNORE INTO trip_users (trip_id,user_id) VALUES (?,?)').bind(id,userId)),...guests.map(name=>env.DB!.prepare('INSERT OR IGNORE INTO trip_external_drivers (trip_id,name) VALUES (?,?)').bind(id,name))];
   if(latestRequest)statements.push(env.DB!.prepare('UPDATE fuel_requests SET payment_status=?,outstanding_cents=?,liters=COALESCE(?,liters) WHERE id=?').bind(input.paymentStatus,input.outstandingCents,planned,latestRequest.id));
