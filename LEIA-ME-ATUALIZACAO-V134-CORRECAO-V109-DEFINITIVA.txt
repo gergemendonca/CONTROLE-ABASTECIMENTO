@@ -1,0 +1,35 @@
+ATUALIZAÇÃO V134 — CORREÇÃO DEFINITIVA DA V109
+
+PROBLEMA IDENTIFICADO
+
+As versões anteriores só localizavam o abastecimento antigo se o lançamento
+mantivesse o mesmo ID interno do veículo da V109. Isso falha se o cadastro do
+carro 21000 foi recriado ou duplicado: o número do carro é o mesmo, mas o ID
+interno fica diferente.
+
+O QUE ESTA VERSÃO FAZ
+
+1. Localiza V101 e V109 pelo controle/número da viagem.
+2. Confirma que a V109 está com o carro 21000.
+3. Procura o abastecimento original da V101 pelo histórico e também pelo
+   identificador do carro 21000, mesmo se o ID interno tiver mudado.
+4. Quando encontrado, reassocia o lançamento ao cadastro atual do 21000 e à
+   V109. O abastecimento do 31000 na V101 não é selecionado.
+5. Grava uma confirmação histórica permanente e restrita à V109. Portanto,
+   mesmo que o vínculo técnico muito antigo esteja incompleto, a V109 é tratada
+   como ABASTECIDA por todas as rotas do sistema — editar viagens, lista,
+   pedidos e bloqueios de nova solicitação.
+6. Cancela somente pedido pendente/autorizado da V109 que nunca tenha sido
+   usado, pois ele se torna desnecessário.
+
+SEGURANÇA
+
+- Não cria um novo abastecimento nem apaga registros.
+- Não altera a V101, que permanece com o carro 31000 e o abastecimento dele.
+- A confirmação é idempotente: pode rodar mais de uma vez sem duplicar nada.
+- A regra é limitada à combinação histórica V101 -> V109 com o carro 21000.
+
+APÓS SUBIR
+
+Abra Área Adm > Editar viagens e atualize a tela. A V109 deve aparecer como
+ABASTECIDA, e não deve voltar a ser oferecida para solicitação inicial.

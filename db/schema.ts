@@ -129,3 +129,13 @@ export const fuelingReassignments=sqliteTable('fueling_reassignments',{
  changedAt:text('changed_at').notNull(),
  reason:text('reason').notNull(),
 });
+
+// Confirmação auditável de combustível físico legado cujo vínculo técnico não
+// pode mais ser recuperado com segurança após troca/recriação do veículo.
+export const fuelingStatusConfirmations=sqliteTable('fueling_status_confirmations',{
+ tripId:integer('trip_id').primaryKey().references(()=>trips.id),
+ vehicleId:integer('vehicle_id').notNull().references(()=>vehicles.id),
+ sourceTripId:integer('source_trip_id').references(()=>trips.id),
+ confirmedAt:text('confirmed_at').notNull(),
+ reason:text('reason').notNull(),
+});
