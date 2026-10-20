@@ -1,0 +1,29 @@
+ATUALIZAÇÃO V133 — CORREÇÃO DEFINITIVA DO STATUS DA V109
+
+ESTADO QUE A ATUALIZAÇÃO PRESERVA
+
+- V101: carro 31000, com o abastecimento próprio já realizado.
+- V109: carro 21000, com o abastecimento inicial que foi feito quando ele
+  ainda estava na V101.
+
+O QUE FOI CORRIGIDO
+
+- A rotina de conciliação V101 -> V109 é executada antes de montar a lista de
+  viagens e passa a tratar a V109 como abastecida quando o lançamento físico
+  do 21000 já estiver nela.
+- Qualquer pedido pendente ou autorizado que tenha ficado aberto na V109 é
+  cancelado automaticamente quando há abastecimento físico do 21000. Pedido
+  não pode prevalecer sobre o abastecimento já realizado.
+- Se a conciliação ainda precisar ocorrer, o lançamento do 21000 é
+  reassociado à V109 e mantém a origem registrada como V101 para auditoria.
+- Não cria abastecimento novo, não exclui lançamento e não modifica o
+  abastecimento do 31000 na V101.
+
+RESULTADO ESPERADO APÓS INSTALAR
+
+Ao abrir Área Adm > Lista de viagens e atualizar a página:
+
+- V109 deve aparecer como ABASTECIDA;
+- V109 não deve aparecer na lista para solicitar abastecimento inicial;
+- V101 continua com o 31000 e seu abastecimento próprio.
+

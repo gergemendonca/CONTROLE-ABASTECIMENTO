@@ -47,16 +47,23 @@ async function findLegacyTrip(number:number){
 export async function repairLegacyFuelingV101ToV109(){
  const [source,target]=await Promise.all([findLegacyTrip(101),findLegacyTrip(109)]);
  if(!source||!target||source.id===target.id||source.vehicleId===target.vehicleId)return {applied:false,reason:'trips_not_ready' as const};
- // O status da viagem considera o carro atual. Se já houver um lançamento
- // fisicamente vinculado à V109, ela já aparece como abastecida e não há nada
- // histórico a conciliar.
- const targetAlreadyFueled=await env.DB!.prepare('SELECT id FROM fueling WHERE vehicle_id=? AND trip_id=? LIMIT 1').bind(target.vehicleId,target.id).first();
- if(targetAlreadyFueled)return {applied:false,reason:'target_already_fueled' as const};
- // A correção anterior aceitava somente original_trip_id vazio. Isso falhava
- // justamente quando uma tentativa anterior já havia registrado a origem da
- // V101, mas ainda não tinha atualizado o vínculo operacional para a V109.
- // Aceitamos explicitamente as três formas históricas do mesmo abastecimento:
- // vínculo direto à V101, origem registrada como V101 ou pedido da V101.
+ // A correção precisa ser idempotente. Se o lançamento já estiver na V109,
+ // não fazemos nada; se não estiver, procuramos o lançamento físico do 21000
+ // em TODAS as formas pelas quais as versões anteriores puderam deixar o
+ // histórico da V101. A existência de outro pedido na V109 nunca bloqueia
+ // esta conciliação: pedido não é abastecimento físico.
+ const targetFuel=await env.DB!.prepare('SELECT id FROM fueling WHERE vehicle_id=? AND trip_id=? ORDER BY created_at ASC,id ASC LIMIT 1').bind(target.vehicleId,target.id).first<{id:number}>();
+ if(targetFuel){
+  await env.DB!.batch([
+   env.DB!.prepare("UPDATE fuel_requests SET status='canceled' WHERE trip_id=? AND status IN ('pending','authorized') AND NOT EXISTS (SELECT 1 FROM fueling used WHERE used.fuel_request_id=fuel_requests.id)").bind(target.id),
+   env.DB!.prepare("DELETE FROM app_notifications WHERE href IN (SELECT '/autorizacoes?pedido=' || id FROM fuel_requests WHERE trip_id=? AND status='canceled')").bind(target.id)
+  ]);
+  return {applied:false,reason:'target_already_fueled' as const};
+ }
+ // V133: além do vínculo e da origem, cobre um lançamento legado que guardou
+ // somente o pedido da V101. Não escolhemos qualquer abastecimento do 21000:
+ // a origem V101 continua obrigatória, portanto o abastecimento do 31000 na
+ // V101 permanece completamente fora desta operação.
  const fuel=await env.DB!.prepare(`SELECT f.id FROM fueling f WHERE f.vehicle_id=? AND (
   f.trip_id=? OR f.original_trip_id=? OR EXISTS (
    SELECT 1 FROM fuel_requests fr WHERE fr.id=f.fuel_request_id AND fr.trip_id=?
@@ -75,7 +82,7 @@ export async function repairLegacyFuelingV101ToV109(){
   // pedidos/abastecimentos efetivamente realizados.
   env.DB!.prepare("UPDATE fuel_requests SET status='canceled' WHERE trip_id=? AND status IN ('pending','authorized') AND NOT EXISTS (SELECT 1 FROM fueling used WHERE used.fuel_request_id=fuel_requests.id)").bind(target.id),
   env.DB!.prepare("DELETE FROM app_notifications WHERE href IN (SELECT '/autorizacoes?pedido=' || id FROM fuel_requests WHERE trip_id=? AND status='canceled')").bind(target.id),
-  env.DB!.prepare('INSERT INTO fueling_reassignments (fueling_id,vehicle_id,from_trip_id,to_trip_id,actor_name,changed_at,reason) VALUES (?,?,?,?,?,?,?)').bind(fuel.id,target.vehicleId,source.id,target.id,'Atualização do sistema',now,'Correção legada V101 para V109: o abastecimento acompanha o veículo 21000')
+  env.DB!.prepare('INSERT INTO fueling_reassignments (fueling_id,vehicle_id,from_trip_id,to_trip_id,actor_name,changed_at,reason) SELECT ?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM fueling_reassignments WHERE fueling_id=? AND to_trip_id=? AND reason LIKE \'Correção legada V101 para V109%\')').bind(fuel.id,target.vehicleId,source.id,target.id,'Atualização do sistema',now,'Correção legada V101 para V109: o abastecimento acompanha o veículo 21000',fuel.id,target.id)
  ]);
  return {applied:true,fuelingId:fuel.id};
 }
