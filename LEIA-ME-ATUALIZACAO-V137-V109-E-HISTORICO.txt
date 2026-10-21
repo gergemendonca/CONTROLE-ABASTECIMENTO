@@ -1,0 +1,29 @@
+ATUALIZAÇÃO V137 — V109 / CARRO 21000 E HISTÓRICO DE VIAGENS
+
+CORREÇÃO APLICADA
+
+1. A V109 passa a receber exclusivamente a confirmação persistente de que o
+   carro 21000 já foi abastecido.
+2. A correção não consulta, não move e não altera o lançamento antigo da V101.
+3. O carro 31000 e seus registros permanecem completamente fora desta rotina.
+4. Se a V109 receber outro carro no futuro, a confirmação é removida
+   automaticamente e não acompanha o novo veículo.
+
+POR QUE OS HISTÓRICOS SUMIRAM
+
+A rota que carrega as viagens tentava reconstruir o lançamento físico antigo
+antes de listar qualquer registro. Quando a estrutura histórica não coincidia
+com a esperada, a consulta inteira falhava. Por isso as viagens desapareciam
+em todas as telas.
+
+COMPORTAMENTO APÓS PUBLICAR
+
+- Área Adm > Editar viagens volta a listar o histórico;
+- V109, enquanto estiver com o carro 21000, aparece como ABASTECIDA;
+- nenhum novo pedido de abastecimento será criado para a V109;
+- V101 e 31000 não são modificados.
+
+DIAGNÓSTICO FUTURO
+
+Se uma falha de consulta voltar a ocorrer, a rota de viagens registra o detalhe
+técnico no Log do sistema do Adm, sem exibi-lo para os demais usuários.
