@@ -1,5 +1,5 @@
 import {env} from 'cloudflare:workers';
-import {ensureVehicleFuelStatus,setVehicleFuelState} from './vehicle-fuel-status';
+import {ensureVehicleFuelStatus} from './vehicle-fuel-status';
 
 /**
  * v125: o abastecimento físico pertence ao veículo. O vínculo com a viagem é
@@ -93,7 +93,6 @@ export async function repairLegacyFuelingV101ToV109(){
   return {applied:false,reason:'target_vehicle_changed' as const};
  }
  await confirmLegacyFuelingV109(null,target,new Date().toISOString());
- await setVehicleFuelState(target.vehicleId,'fueled',{note:'Confirmação histórica: carro 21000 já abastecido ao atender a V109'});
  return {applied:true,confirmedWithoutLegacyLink:true};
 }
 
@@ -111,5 +110,14 @@ export async function planVehicleFuelTransfer(change:Change):Promise<TransferPla
  // O combustível e o pedido pertencem ao carro. Trocar o carro da viagem
  // jamais move, cancela ou reescreve lançamentos físicos/pedidos.
  await ensureVehicleFuelStatus();
+ // Só reaproveitamos combustível quando foi confirmado que a viagem anterior
+ // não aconteceu. Em qualquer outra viagem nova, o histórico do carro não
+ // basta para marcá-la como abastecida: ela começa aguardando o novo fluxo.
+ if(change.previousTripOccurred!==false){
+  result.statements.push(env.DB!.prepare(`INSERT INTO vehicle_fuel_status (vehicle_id,state,fueling_id,request_id,updated_at,note)
+   VALUES (?,'red',NULL,NULL,?,?)
+   ON CONFLICT(vehicle_id) DO UPDATE SET state=excluded.state,fueling_id=NULL,request_id=NULL,updated_at=excluded.updated_at,note=excluded.note`)
+   .bind(change.vehicleId,new Date().toISOString(),change.newFuelingIntent==='request'?'Nova viagem aguardando solicitação de abastecimento':'Nova viagem sem reaproveitamento confirmado'));
+ }
  return result;
 }

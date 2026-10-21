@@ -85,16 +85,29 @@ export const tripExternalDrivers=sqliteTable('trip_external_drivers',{
 export const fuelRequests=sqliteTable('fuel_requests',{
  id:integer('id').primaryKey({autoIncrement:true}),
  tripId:integer('trip_id').notNull().references(()=>trips.id),
+ vehicleId:integer('vehicle_id').references(()=>vehicles.id),
  requestedBy:integer('requested_by').references(()=>appUsers.id),
  liters:real('liters').notNull(),
  routeKm:integer('route_km').notNull(),
  paymentStatus:text('payment_status').notNull(),
  outstandingCents:integer('outstanding_cents').notNull().default(0),
  clientPaid:integer('client_paid').notNull().default(0),
+  extraordinary:integer('extraordinary').notNull().default(0),
  status:text('status').notNull().default('pending'),
  createdAt:text('created_at').notNull(),
  authorizedBy:integer('authorized_by').references(()=>appUsers.id),
  authorizedAt:text('authorized_at'),
+});
+
+// Estado operacional do combustível: o abastecimento e o pedido pertencem ao
+// veículo. As viagens apenas consultam o carro que lhes está atribuído.
+export const vehicleFuelStatus=sqliteTable('vehicle_fuel_status',{
+ vehicleId:integer('vehicle_id').primaryKey().references(()=>vehicles.id),
+ state:text('state').notNull(),
+ fuelingId:integer('fueling_id').references(()=>fueling.id),
+ requestId:integer('request_id').references(()=>fuelRequests.id),
+ updatedAt:text('updated_at').notNull(),
+ note:text('note').notNull().default(''),
 });
 
 export const appNotifications=sqliteTable('app_notifications',{
@@ -126,5 +139,15 @@ export const fuelingReassignments=sqliteTable('fueling_reassignments',{
  toTripId:integer('to_trip_id').references(()=>trips.id),
  actorName:text('actor_name').notNull(),
  changedAt:text('changed_at').notNull(),
+ reason:text('reason').notNull(),
+});
+
+// Confirmação auditável de combustível físico legado cujo vínculo técnico não
+// pode mais ser recuperado com segurança após troca/recriação do veículo.
+export const fuelingStatusConfirmations=sqliteTable('fueling_status_confirmations',{
+ tripId:integer('trip_id').primaryKey().references(()=>trips.id),
+ vehicleId:integer('vehicle_id').notNull().references(()=>vehicles.id),
+ sourceTripId:integer('source_trip_id').references(()=>trips.id),
+ confirmedAt:text('confirmed_at').notNull(),
  reason:text('reason').notNull(),
 });

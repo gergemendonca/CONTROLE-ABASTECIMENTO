@@ -1,0 +1,25 @@
+ATUALIZAÇÃO V142 — CORREÇÃO URGENTE DE STATUS DA NOVA VIAGEM
+
+CORREÇÃO
+
+Um abastecimento antigo do carro não poderá mais marcar automaticamente uma
+viagem nova como “Viagem abastecida”. O sistema deixa de presumir que há
+combustível suficiente após uma viagem anterior realizada.
+
+FLUXO
+
+Quando houver viagem anterior:
+
+- combustível anterior NÃO foi utilizado (a viagem não aconteceu): o
+  abastecimento pode ser reaproveitado e a nova viagem fica abastecida;
+- combustível anterior foi utilizado: o sistema pergunta se haverá novo
+  abastecimento;
+  - SIM: a viagem começa vermelha e fica disponível para solicitar;
+  - NÃO: a viagem fica cinza, sem solicitação e sem pendência.
+
+CORREÇÃO DE DADOS JÁ CRIADOS
+
+Ao abrir o app após a publicação, os estados verdes que foram criados apenas
+por histórico antigo do carro são corrigidos para vermelho. O histórico dos
+lançamentos não é apagado. A confirmação específica do carro 21000 na V109
+continua verde, pois ela é tratada como exceção confirmada daquela viagem.

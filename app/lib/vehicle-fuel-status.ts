@@ -22,14 +22,22 @@ export async function ensureVehicleFuelStatus(){
   updated_at TEXT NOT NULL,
   note TEXT NOT NULL DEFAULT ''
  )`).run();
- // Cria um estado inicial somente para carros sem estado. O último lançamento
- // físico é do veículo e pode atender mais de uma viagem.
+ // Histórico de abastecimento não significa combustível disponível para uma
+ // NOVA viagem: a viagem anterior pode ter consumido tudo ou parte do tanque.
+ // Por segurança, todo carro sem decisão operacional começa em vermelho.
  await env.DB!.prepare(`INSERT INTO vehicle_fuel_status (vehicle_id,state,fueling_id,request_id,updated_at,note)
  SELECT v.id,
-  CASE WHEN EXISTS (SELECT 1 FROM fueling f WHERE f.vehicle_id=v.id AND f.liters>0) THEN 'fueled' ELSE 'red' END,
-  (SELECT f.id FROM fueling f WHERE f.vehicle_id=v.id AND f.liters>0 ORDER BY f.created_at DESC,f.id DESC LIMIT 1),
+  'red',
+  NULL,
   NULL,datetime('now'),'Estado inicial por histórico do veículo'
  FROM vehicles v WHERE NOT EXISTS (SELECT 1 FROM vehicle_fuel_status s WHERE s.vehicle_id=v.id)`).run();
+ // Corrige estados criados pelas versões anteriores: elas marcavam como verde
+ // qualquer carro que tivesse um abastecimento antigo, mesmo após a viagem
+ // correspondente ter terminado. O lançamento físico continua no histórico.
+ await env.DB!.prepare(`UPDATE vehicle_fuel_status
+  SET state='red',fueling_id=NULL,request_id=NULL,updated_at=datetime('now'),note='Histórico anterior não confirma abastecimento de nova viagem'
+  WHERE note='Estado inicial por histórico do veículo'
+     OR note LIKE 'Confirmação histórica: carro 21000%'`).run();
 }
 
 export async function setVehicleFuelState(vehicleId:number,state:VehicleFuelState,input:{fuelingId?:number|null;requestId?:number|null;note?:string}={}){
