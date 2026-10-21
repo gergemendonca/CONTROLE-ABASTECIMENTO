@@ -22,6 +22,25 @@ export async function ensureVehicleFuelStatus(){
   updated_at TEXT NOT NULL,
   note TEXT NOT NULL DEFAULT ''
  )`).run();
+ // Camada de auditoria complementar: um AB-ID físico pode ser utilizado por
+ // uma ou mais viagens, sem duplicar o lançamento nem mudar o histórico.
+ await env.DB!.prepare(`CREATE TABLE IF NOT EXISTS fueling_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  fueling_id INTEGER NOT NULL,
+  vehicle_id INTEGER NOT NULL,
+  origin_trip_id INTEGER,
+  used_by_trip_id INTEGER NOT NULL,
+  relationship TEXT NOT NULL CHECK(relationship IN ('origin','transferred')),
+  recorded_at TEXT NOT NULL,
+  actor_name TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  UNIQUE(fueling_id,used_by_trip_id)
+ )`).run();
+ // Registra os lançamentos antigos somente como origem/uso da própria viagem.
+ // Nada é alterado na tabela de abastecimentos existente.
+ await env.DB!.prepare(`INSERT OR IGNORE INTO fueling_usage (fueling_id,vehicle_id,origin_trip_id,used_by_trip_id,relationship,recorded_at,actor_name,note)
+  SELECT f.id,f.vehicle_id,f.trip_id,f.trip_id,'origin',COALESCE(f.created_at,datetime('now')),'Migração','Vínculo histórico preservado'
+  FROM fueling f WHERE f.trip_id IS NOT NULL AND f.liters>0`).run();
  // Histórico de abastecimento não significa combustível disponível para uma
  // NOVA viagem: a viagem anterior pode ter consumido tudo ou parte do tanque.
  // Por segurança, todo carro sem decisão operacional começa em vermelho.
@@ -48,6 +67,16 @@ export async function setVehicleFuelState(vehicleId:number,state:VehicleFuelStat
   .bind(vehicleId,state,input.fuelingId??null,input.requestId??null,new Date().toISOString(),input.note||'').run();
 }
 
-export const tripFuelStateSql=(alias='t')=>`COALESCE((SELECT state FROM vehicle_fuel_status fuel_state WHERE fuel_state.vehicle_id=${alias}.vehicle_id),'red')`;
-export const tripFueledSql=(alias='t')=>`${tripFuelStateSql(alias)}='fueled'`;
-export const tripNotFueledSql=(alias='t')=>`${tripFuelStateSql(alias)}<>'fueled'`;
+// O cartão e as rotinas de cada viagem olham o V-ID. O estado do carro pode
+// existir para auditoria, mas não torna outra viagem abastecida por engano.
+export const tripFueledSql=(alias='t')=>`(
+ EXISTS (SELECT 1 FROM fueling direct_fuel WHERE direct_fuel.trip_id=${alias}.id AND direct_fuel.liters>0)
+ OR EXISTS (SELECT 1 FROM fueling_usage usage WHERE usage.used_by_trip_id=${alias}.id)
+ OR EXISTS (SELECT 1 FROM fueling_status_confirmations confirmed WHERE confirmed.trip_id=${alias}.id AND confirmed.vehicle_id=${alias}.vehicle_id)
+)`;
+export const tripFuelStateSql=(alias='t')=>`CASE
+ WHEN ${tripFueledSql(alias)} THEN 'fueled'
+ WHEN EXISTS (SELECT 1 FROM fuel_requests request_for_trip WHERE request_for_trip.trip_id=${alias}.id AND request_for_trip.status='authorized') THEN 'authorized'
+ WHEN EXISTS (SELECT 1 FROM fuel_requests request_for_trip WHERE request_for_trip.trip_id=${alias}.id AND request_for_trip.status='pending') THEN 'requested'
+ ELSE 'red' END`;
+export const tripNotFueledSql=(alias='t')=>`NOT ${tripFueledSql(alias)}`;

@@ -1,0 +1,41 @@
+ATUALIZAÇÃO V145 — RASTREABILIDADE AB-ID, CAR-ID E V-ID
+
+ESTRUTURA COMPLEMENTAR
+
+Esta atualização não substitui as rotinas existentes de viagem, solicitação,
+autorização, lançamento, cancelamento ou relatórios. Ela adiciona uma camada
+de rastreabilidade chamada "uso de abastecimento".
+
+- CAR-ID: o veículo que recebeu o abastecimento físico;
+- V-ID: a viagem de origem e cada viagem que utilizou o abastecimento;
+- AB-ID: o lançamento físico único de abastecimento, exibido como AB-<número>.
+
+REGRAS DA NOVA VIAGEM
+
+1. Viagem anterior com mais de dois dias:
+   é apenas histórico. Não transfere abastecimento para a viagem nova.
+   O formulário decide: terá abastecimento (fluxo vermelho) ou não terá
+   abastecimento (cinza).
+
+2. Viagem anterior recente que não aconteceu:
+   somente um AB-ID físico recente, do mesmo carro e originado naquela viagem,
+   pode ser reaproveitado. O mesmo AB-ID é registrado na nova viagem como
+   "transferido", sem duplicar o lançamento.
+
+3. Viagem anterior realizada:
+   nenhum abastecimento é presumido. A decisão continua no formulário da
+   viagem nova.
+
+CONSULTA
+
+Em "Abastecimentos feitos", cada cartão mostra:
+
+- AB-ID;
+- V-ID de origem;
+- lista de V-IDs que utilizaram o mesmo abastecimento.
+
+STATUS
+
+O status de uma viagem é calculado pelos registros dela: lançamento físico,
+uso transferido do AB-ID, pedido da própria viagem ou confirmação específica.
+O simples histórico de outro uso do carro não muda mais a cor da viagem.

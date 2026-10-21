@@ -113,6 +113,18 @@ export async function planVehicleFuelTransfer(change:Change):Promise<TransferPla
  // Só reaproveitamos combustível quando foi confirmado que a viagem anterior
  // não aconteceu. Em qualquer outra viagem nova, o histórico do carro não
  // basta para marcá-la como abastecida: ela começa aguardando o novo fluxo.
+ if(change.previousTripOccurred===false&&Number.isSafeInteger(change.previousTripId)){
+  const recentFuel=await env.DB!.prepare(`SELECT id,trip_id AS originTripId FROM fueling
+   WHERE vehicle_id=? AND trip_id=? AND liters>0
+     AND datetime(created_at)>=datetime('now','-3 hours','-2 days')
+   ORDER BY datetime(created_at) DESC,id DESC LIMIT 1`).bind(change.vehicleId,change.previousTripId).first<{id:number;originTripId:number}>();
+  if(recentFuel){
+   result.receivedFuelingId=recentFuel.id;
+   result.statements.push(env.DB!.prepare(`INSERT OR IGNORE INTO fueling_usage (fueling_id,vehicle_id,origin_trip_id,used_by_trip_id,relationship,recorded_at,actor_name,note)
+    VALUES (?,?,?,?,?,?,?,?)`).bind(recentFuel.id,change.vehicleId,recentFuel.originTripId,change.tripId,'transferred',new Date().toISOString(),change.actorName,'Abastecimento recente reaproveitado: viagem de origem não ocorreu'));
+   return result;
+  }
+ }
  if(change.previousTripOccurred!==false){
   result.statements.push(env.DB!.prepare(`INSERT INTO vehicle_fuel_status (vehicle_id,state,fueling_id,request_id,updated_at,note)
    VALUES (?,'red',NULL,NULL,?,?)
