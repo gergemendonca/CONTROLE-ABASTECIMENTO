@@ -222,7 +222,13 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
       const response=await fetch(`/api/vehicle-fuel-context?vehicleId=${encodeURIComponent(car)}&excludeTripId=${encodeURIComponent(editing||0)}&referenceDate=${encodeURIComponent(departureDate)}`,{cache:'no-store'}),data:any=await response.json();
       if(!response.ok)throw Error(data.error||'Não foi possível verificar o histórico do veículo.');
       const trip=data.previousTrip as PreviousTrip|null;
-      if(trip&&fuelDecision?.previousTripId!==trip.id){setPreviousTrip(trip);return;}
+      if(trip&&Number(trip.hasFueling)===1&&fuelDecision?.previousTripId!==trip.id){
+        // Viagem antiga já é considerada realizada. Não deixamos o usuário
+        // preso em duas perguntas: ela vai direto à decisão de novo abastecer.
+        setPreviousTripOccurred(trip.arrivalDate<today?true:null);
+        setPreviousTrip(trip);
+        return;
+      }
       finishDatesConfirmation();
     }catch(error){setMsg(error instanceof Error?error.message:'Não foi possível verificar o histórico do veículo.');}
     finally{setCheckingVehicleHistory(false);}
@@ -231,7 +237,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     if(!displacement)return;
     setAcceptedConflicts(items=>items.includes(vehicleConflictKey)?items:[...items,vehicleConflictKey]);
     setPreviousTrip(displacement.trip);
-    setPreviousTripOccurred(null);
+    setPreviousTripOccurred(displacement.trip.arrivalDate<today?true:null);
   }
   async function checkReplacementVehicle(){
     if(!displacement?.replacementVehicleId)return setMsg('Escolha o carro que ficará na viagem anterior.');

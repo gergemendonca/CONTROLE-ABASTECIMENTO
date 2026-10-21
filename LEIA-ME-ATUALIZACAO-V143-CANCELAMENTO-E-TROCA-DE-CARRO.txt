@@ -1,0 +1,21 @@
+ATUALIZAÇÃO V143 — CORREÇÃO URGENTE DE CANCELAMENTO E TROCA DE CARRO
+
+CANCELAR VIAGEM
+
+O bloqueio de cancelamento passa a verificar somente se existe abastecimento
+físico lançado para A PRÓPRIA viagem, ou uma confirmação específica dela.
+O simples histórico de combustível do carro não bloqueia mais o cancelamento.
+
+TROCA DE CARRO
+
+Quando a viagem anterior já tiver data de chegada passada, a tela não pergunta
+mais se o combustível foi usado e fica presa nessa etapa. Ela abre diretamente
+a pergunta necessária:
+
+  Haverá novo abastecimento para esta viagem?
+
+- Sim: segue o fluxo normal, começando em vermelho para solicitar;
+- Não: a viagem fica cinza, sem solicitação e sem pendência.
+
+Para viagem anterior ainda não realizada, permanece a pergunta sobre o uso do
+combustível, pois só nesse caso pode existir reaproveitamento confirmado.
