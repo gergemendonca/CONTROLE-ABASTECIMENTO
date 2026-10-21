@@ -85,6 +85,7 @@ export const tripExternalDrivers=sqliteTable('trip_external_drivers',{
 export const fuelRequests=sqliteTable('fuel_requests',{
  id:integer('id').primaryKey({autoIncrement:true}),
  tripId:integer('trip_id').notNull().references(()=>trips.id),
+ vehicleId:integer('vehicle_id').references(()=>vehicles.id),
  requestedBy:integer('requested_by').references(()=>appUsers.id),
  liters:real('liters').notNull(),
  routeKm:integer('route_km').notNull(),
@@ -96,6 +97,17 @@ export const fuelRequests=sqliteTable('fuel_requests',{
  createdAt:text('created_at').notNull(),
  authorizedBy:integer('authorized_by').references(()=>appUsers.id),
  authorizedAt:text('authorized_at'),
+});
+
+// Estado operacional do combustível: o abastecimento e o pedido pertencem ao
+// veículo. As viagens apenas consultam o carro que lhes está atribuído.
+export const vehicleFuelStatus=sqliteTable('vehicle_fuel_status',{
+ vehicleId:integer('vehicle_id').primaryKey().references(()=>vehicles.id),
+ state:text('state').notNull(),
+ fuelingId:integer('fueling_id').references(()=>fueling.id),
+ requestId:integer('request_id').references(()=>fuelRequests.id),
+ updatedAt:text('updated_at').notNull(),
+ note:text('note').notNull().default(''),
 });
 
 export const appNotifications=sqliteTable('app_notifications',{

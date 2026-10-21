@@ -1,7 +1,8 @@
 import {env} from 'cloudflare:workers';
 import {isAdmin} from '../../admin-auth';
 import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
-import {ensureVehicleFuelAssignment,tripFueledSql} from '@/app/lib/vehicle-fueling-assignment';
+import {ensureVehicleFuelAssignment} from '@/app/lib/vehicle-fueling-assignment';
+import {tripFueledSql} from '@/app/lib/vehicle-fuel-status';
 import {activeTrip,ensureTripCancellation} from '@/app/lib/trip-cancellation';
 
 import {ensureFuelingFunding,ensureTripFuelOptions} from '@/app/lib/trip-fuel-options';

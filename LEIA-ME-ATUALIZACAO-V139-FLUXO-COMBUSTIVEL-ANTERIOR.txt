@@ -1,0 +1,41 @@
+ATUALIZAÇÃO V139 — DECISÃO DE COMBUSTÍVEL EM CARRO JÁ USADO
+
+O QUE MUDA
+
+Quando um carro for atribuído a uma viagem e já existir viagem recente ou na
+mesma data, o sistema utiliza a decisão operacional já existente, agora com
+perguntas claras:
+
+1. “O combustível da viagem anterior foi utilizado?”
+
+   - Não, permanece no carro:
+     o combustível físico continua disponível no veículo. A nova viagem segue
+     com o status verde de combustível disponível no carro.
+
+   - Sim, foi utilizado:
+     o sistema pergunta se haverá novo abastecimento para a nova viagem.
+
+2. “Haverá novo abastecimento para esta viagem?”
+
+   - Sim, solicitar abastecimento:
+     fluxo normal: vermelho (sem solicitação), laranja (solicitado), azul
+     (autorizado) e verde (abastecido).
+
+   - Não, viagem sem abastecimento:
+     a nova viagem fica cinza. Não cria solicitação, autorização ou pendência.
+     O ADM pode editar a viagem posteriormente e mudar para “terá
+     abastecimento”.
+
+PRESERVADO
+
+- O abastecimento físico continua ligado ao carro.
+- A correção histórica do carro 21000 na V109 continua preservada: se o
+  combustível não foi utilizado antes da realocação, a V109 permanece verde.
+- Histórico, lançamentos e viagens existentes não são apagados.
+
+APLICAÇÃO
+
+Substitua o conteúdo do projeto pela atualização e publique normalmente no
+Cloudflare. Depois, faça um teste com um carro que possua viagem recente:
+utilizado -> não haverá novo abastecimento -> cartão cinza; e utilizado ->
+sim -> fluxo vermelho/laranja/azul/verde.

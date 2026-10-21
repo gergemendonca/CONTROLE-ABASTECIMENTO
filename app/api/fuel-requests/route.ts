@@ -3,7 +3,8 @@ import {env} from 'cloudflare:workers';
 import {isManagementUser,requireRole} from '../admin-auth';
 import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
 import {ensureTripAudit,recordTripAudit} from '@/app/lib/trip-audit';
-import {ensureVehicleFuelAssignment,tripFueledSql} from '@/app/lib/vehicle-fueling-assignment';
+import {ensureVehicleFuelAssignment} from '@/app/lib/vehicle-fueling-assignment';
+import {setVehicleFuelState,tripFueledSql} from '@/app/lib/vehicle-fuel-status';
 import {activeTrip,ensureTripCancellation} from '@/app/lib/trip-cancellation';
 
 type Item={tripId:number;liters:number;routeKm:number;paymentStatus:'total'|'parcial'|'nao_pago';outstandingCents:number;clientPaid?:boolean;extraordinary?:boolean};
@@ -28,7 +29,7 @@ async function loggedPOST(req:Request){
   for(const item of requests)if(!Number.isSafeInteger(item.tripId)||!Number.isFinite(item.liters)||item.liters<=0||!Number.isSafeInteger(item.routeKm)||item.routeKm<0||!paymentOk(item.paymentStatus)||!Number.isSafeInteger(item.outstandingCents)||item.outstandingCents<0||typeof item.extraordinary!=='undefined'&&typeof item.extraordinary!=='boolean')return Response.json({error:'Confira litros, KM e pagamento de cada viagem.'},{status:400});
   const now=new Date().toISOString(),created:number[]=[];
   for(const item of requests){
-   const trip=await env.DB!.prepare(`SELECT COALESCE(departure_date,travel_date) AS departureDate,COALESCE(arrival_date,travel_date) AS arrivalDate,total_value_cents AS totalValueCents,${controlSql('trips')} FROM trips WHERE id=? AND ${activeTrip('trips')} AND COALESCE(fuel_canceled_at,'')='' AND COALESCE(no_fueling,0)=0`).bind(item.tripId).first<{departureDate:string;arrivalDate:string;totalValueCents:number;controlNumber:string}>();
+   const trip=await env.DB!.prepare(`SELECT vehicle_id AS vehicleId,COALESCE(departure_date,travel_date) AS departureDate,COALESCE(arrival_date,travel_date) AS arrivalDate,total_value_cents AS totalValueCents,${controlSql('trips')} FROM trips WHERE id=? AND ${activeTrip('trips')} AND COALESCE(fuel_canceled_at,'')='' AND COALESCE(no_fueling,0)=0`).bind(item.tripId).first<{vehicleId:number;departureDate:string;arrivalDate:string;totalValueCents:number;controlNumber:string}>();
    // O pedido sempre é registrado no momento atual. A retroatividade vem da
    // data da própria viagem, e não de uma data informada nesta etapa.
    const isRetroactive=!!trip&&trip.arrivalDate<today();
@@ -44,11 +45,12 @@ async function loggedPOST(req:Request){
    const inProgress=!!trip&&trip.departureDate<=today()&&trip.arrivalDate>=today();
    if(extraordinary&&(!alreadyFueled||!inProgress))return Response.json({error:'O abastecimento extraordinário só pode ser solicitado para viagem em curso que já possui abastecimento inicial lançado.'},{status:409});
    if(alreadyFueled&&!extraordinary)return Response.json({error:'O veículo desta viagem já tem abastecimento inicial vinculado. Use a opção de abastecimento extraordinário se a viagem ainda estiver em curso.'},{status:409});
-   const existing=await env.DB!.prepare("SELECT fr.id FROM fuel_requests fr WHERE fr.trip_id=? AND fr.status IN ('pending','authorized') AND NOT EXISTS (SELECT 1 FROM fueling used WHERE used.fuel_request_id=fr.id) LIMIT 1").bind(item.tripId).first();
-   if(existing)return Response.json({error:'Esta viagem já possui um pedido pendente de autorização.'},{status:409});
-   const inserted=await env.DB!.prepare("INSERT INTO fuel_requests (trip_id,requested_by,requested_by_name,liters,route_km,payment_status,outstanding_cents,client_paid,retroactive,extraordinary,status,created_at,registered_at) VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?)").bind(item.tripId,access.user.bootstrap?null:access.user.id,access.user.name,item.liters,item.routeKm,item.paymentStatus,item.outstandingCents,item.clientPaid?1:0,isRetroactive?1:0,extraordinary?1:0,now,now).run();
+   const existing=await env.DB!.prepare("SELECT fr.id FROM fuel_requests fr WHERE fr.vehicle_id=? AND fr.status IN ('pending','authorized') AND NOT EXISTS (SELECT 1 FROM fueling used WHERE used.fuel_request_id=fr.id) LIMIT 1").bind(trip!.vehicleId).first();
+   if(existing)return Response.json({error:'Este carro já possui um pedido pendente de autorização.'},{status:409});
+   const inserted=await env.DB!.prepare("INSERT INTO fuel_requests (trip_id,vehicle_id,requested_by,requested_by_name,liters,route_km,payment_status,outstanding_cents,client_paid,retroactive,extraordinary,status,created_at,registered_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,'pending',?,?)").bind(item.tripId,trip!.vehicleId,access.user.bootstrap?null:access.user.id,access.user.name,item.liters,item.routeKm,item.paymentStatus,item.outstandingCents,item.clientPaid?1:0,isRetroactive?1:0,extraordinary?1:0,now,now).run();
    const requestId=Number((inserted as any).meta?.last_row_id);
    if(!Number.isSafeInteger(requestId)||requestId<=0)return Response.json({error:'Não foi possível confirmar a criação do pedido.'},{status:503});
+   await setVehicleFuelState(trip!.vehicleId,'requested',{requestId,note:`Pedido ${requestId} criado para o carro`});
    created.push(requestId);
    if(isRetroactive)try{await ensureTripAudit();await recordTripAudit({tripId:item.tripId,action:'pedido_criado',actorName:access.user.name,effectiveAt:now,registeredAt:now,retroactive:true})}catch{}
    try{
