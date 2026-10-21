@@ -4,6 +4,62 @@
 @theme inline { --color-background:var(--background); --color-foreground:var(--foreground); --color-popover:var(--popover); --color-popover-foreground:var(--popover-foreground); --color-muted:var(--muted); --color-muted-foreground:var(--muted-foreground); --color-accent:var(--accent); --color-accent-foreground:var(--accent-foreground); --color-primary:var(--primary); --color-primary-foreground:var(--primary-foreground); --color-border:var(--border); --color-input:var(--input); --color-ring:var(--ring); }
 body { background:var(--background); color:var(--foreground); font-family:Arial,Helvetica,sans-serif; }
 
+/* Retorno único para qualquer tela: consulta em andamento e toque reconhecido. */
+.app-loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  background: rgba(15, 43, 67, .28);
+  backdrop-filter: blur(1px);
+}
+.app-loading-card {
+  display: flex;
+  align-items: center;
+  gap: .85rem;
+  max-width: 26rem;
+  border: 2px solid #096a9b;
+  border-radius: 1rem;
+  background: #fff;
+  padding: 1.1rem 1.25rem;
+  color: #102b43;
+  font-size: 1.125rem;
+  box-shadow: 0 14px 38px rgba(15, 43, 67, .24);
+}
+.app-loading-spinner {
+  width: 1.6rem;
+  height: 1.6rem;
+  flex: 0 0 auto;
+  border: 4px solid #c9dbe8;
+  border-top-color: #096a9b;
+  border-radius: 50%;
+  animation: app-spin .75s linear infinite;
+}
+.app-click-feedback {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 101;
+  margin: 0;
+  border-radius: .75rem;
+  background: #178045;
+  padding: .8rem 1rem;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 700;
+  box-shadow: 0 8px 22px rgba(15, 43, 67, .25);
+  animation: app-toast-in .18s ease-out;
+}
+button.app-button-activated {
+  transform: scale(.97);
+  filter: brightness(.88);
+  transition: transform .12s ease, filter .12s ease;
+}
+@keyframes app-spin { to { transform: rotate(360deg); } }
+@keyframes app-toast-in { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
 /* Destaque visual dos atalhos principais sem aumentar texto ou botões. */
 main.min-h-\[100dvh\] svg.h-10.w-10 {
   width: 3rem;

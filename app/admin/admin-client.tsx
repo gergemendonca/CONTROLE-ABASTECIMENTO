@@ -14,6 +14,7 @@ type Trip = {
   controlNumber?: string;
   userIds: number[];
   noFueling?:number;
+  isCompleted?:number;
   plannedLiters?:number|null;
   requestStatus?: "missing" | "pending" | "authorized" | "fueled" | "not_required";
   fuelCanceledAt?: string;
@@ -40,7 +41,7 @@ const formatDate = (date: string) => date.split("-").reverse().join("/");
 const tripStatus = (status?: Trip["requestStatus"]) => {
   if(status==="not_required")return {icon:"—",label:"Viagem sem abastecimento",className:"border-slate-400 bg-slate-200 text-slate-900",background:"#e2e8f0",border:"#64748b"};
   if (status === "fueled")
-    return { icon: "✓", label: "Combustível disponível no carro", className: "border-emerald-500 bg-emerald-100 text-emerald-950", background: "#c8f0d5", border: "#178045" };
+    return { icon: "✓", label: "Viagem abastecida", className: "border-emerald-500 bg-emerald-100 text-emerald-950", background: "#c8f0d5", border: "#178045" };
   if (status === "authorized")
     return { icon: "✓", label: "Abastecimento autorizado", className: "border-sky-500 bg-sky-100 text-sky-950", background: "#b9dafe", border: "#2563a6" };
   if (status === "pending")
@@ -659,14 +660,16 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                   .map(driverName)
                   .filter(Boolean),...(trip.externalDriverNames||[])];
                 const status = Number(trip.noFueling)===1 ? tripStatus("not_required") : trip.fuelCanceledAt ? {icon:"×",label:"Abastecimento cancelado",className:"border-slate-400 bg-slate-200 text-slate-900",background:"#d9e0e8",border:"#64748b"} : tripStatus(trip.requestStatus);
+                const completed=Number(trip.isCompleted)===1;
                 return (
                   <article
                     key={trip.id}
-                    className="rounded-2xl border-2 p-5 text-slate-900 shadow-sm"
-                    data-trip-status={trip.noFueling ? "not_required" : trip.fuelCanceledAt ? "canceled" : trip.requestStatus || "missing"}
-                    style={{backgroundColor:status.background,borderColor:status.border,color:"#0f172a"}}
+                    className={`rounded-2xl border-2 p-5 text-slate-900 shadow-sm ${completed?"opacity-70 saturate-50":""}`}
+                    data-trip-status={completed ? "completed" : trip.noFueling ? "not_required" : trip.fuelCanceledAt ? "canceled" : trip.requestStatus || "missing"}
+                    style={{backgroundColor:completed?"#e7edf3":status.background,borderColor:completed?"#94a3b8":status.border,color:"#0f172a"}}
                   >
                     <p className="inline-flex rounded-full bg-[#102b43] px-3 py-1 text-base font-extrabold text-white">Controle: {trip.controlNumber||`V-${String(trip.id).padStart(6,"0")}`}</p>
+                    {completed&&<p className="mt-3 inline-flex rounded-full border-2 border-slate-500 bg-slate-200 px-3 py-2 text-base font-extrabold text-slate-800">✓ Viagem realizada</p>}
                     {Number(trip.hasLateActivity)===1&&<p className="mt-3 inline-flex items-center gap-2 rounded-xl border-2 border-amber-500 bg-amber-100 px-3 py-2 text-base font-extrabold text-amber-950"><span className="text-xl" aria-hidden="true">⚠</span>MOVIMENTAÇÃO FORA DO PRAZO</p>}
                     {(trip.lateActivities||[]).map((activity,index)=><p key={index} className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-950">⚠ {lateActionLabel(activity.action)} por {activity.actorName}. Data do fato: {dateTime(activity.effectiveAt)} · registrado no app: {dateTime(activity.registeredAt)}.</p>)}
                     {trip.fuelCanceledAt&&<p className="mt-3 text-base font-semibold">Cancelado por {trip.fuelCanceledBy||"Não informado"} em {dateTime(trip.fuelCanceledAt)}. Motivo: {trip.fuelCancelReason}</p>}

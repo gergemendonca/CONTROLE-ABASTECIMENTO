@@ -1,0 +1,21 @@
+ATUALIZAÇÃO V141 — RETORNO VISUAL EM TODAS AS TELAS
+
+CARREGAMENTO
+
+Ao abrir uma tela protegida, o app mostra:
+
+  Aguarde, carregando informações...
+
+Durante uma consulta que leve mais de um instante, a mesma mensagem aparece
+no centro da tela com indicador de carregamento. Ela fecha automaticamente
+assim que as informações chegam ou ocorre uma falha.
+
+CLIQUE EM BOTÕES
+
+Todo botão ativo passa a dar retorno imediato ao toque:
+
+- pequeno efeito visual de pressão no botão;
+- aviso “✓ Comando recebido” no canto inferior da tela.
+
+O retorno não substitui mensagens de sucesso, erro ou confirmação já usadas
+em cada ação do sistema.

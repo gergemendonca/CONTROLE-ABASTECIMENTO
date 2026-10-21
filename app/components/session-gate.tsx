@@ -28,6 +28,6 @@ export function SessionGate({children}:{children:React.ReactNode}){
       .catch(()=>needsLogin?window.location.replace('/?next='+encodeURIComponent(window.location.pathname+window.location.search)):setChecked(true));
   },[pathname,mustCheck,needsLogin]);
 
-  if(mustCheck&&!checked)return <main className="grid min-h-screen place-items-center bg-slate-50 text-lg text-slate-600">Verificando acesso...</main>;
+  if(mustCheck&&!checked)return <main className="grid min-h-screen place-items-center bg-slate-50 p-5 text-center text-lg text-slate-600"><p role="status" className="rounded-2xl bg-white px-6 py-5 font-bold shadow">Aguarde, carregando informações...</p></main>;
   return <>{children}</>;
 }
