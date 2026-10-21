@@ -1,0 +1,14 @@
+ATUALIZAÇÃO V144 — CORREÇÃO URGENTE DA LISTA “SOLICITAR ABASTECIMENTO”
+
+Uma viagem pendente passa a ser analisada por seus próprios registros.
+
+Ela aparece em “Solicitar abastecimento” quando:
+
+- não está cancelada;
+- não foi marcada como “sem abastecimento necessário”;
+- não possui abastecimento físico próprio;
+- não possui pedido pendente ou autorizado próprio;
+- não é a confirmação específica da V109/21000.
+
+Abastecimento, pedido ou status de OUTRA viagem do mesmo carro não a escondem
+mais. Isso permite gerar imediatamente o pedido da viagem pendente.
