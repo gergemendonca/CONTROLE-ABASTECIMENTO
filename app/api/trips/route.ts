@@ -25,7 +25,7 @@ async function ensureMovementFlags(){
 }
 function valid(input:TripInput){const guests=externalNames(input);return Number.isInteger(input.vehicleId)&&dateOk(input.departureDate)&&dateOk(input.arrivalDate)&&input.arrivalDate>=input.departureDate&&typeof input.route==='string'&&!!input.route.trim()&&input.route.trim().length<=300&&Number.isSafeInteger(input.totalKm)&&input.totalKm>0&&Number.isSafeInteger(input.totalValueCents)&&input.totalValueCents>0&&Array.isArray(input.associatedUserIds)&&input.associatedUserIds.every(Number.isSafeInteger)&&Array.isArray(input.externalDriverNames)&&guests.length===(input.externalDriverNames||[]).filter(name=>String(name).trim()).length&&(input.associatedUserIds.length+guests.length)<=3}
 
-export async function GET(req:Request){
+async function loggedGET(req:Request){
  try{
   const url=new URL(req.url),vehicleId=Number(url.searchParams.get('vehicleId')),date=url.searchParams.get('date'),from=url.searchParams.get('from'),to=url.searchParams.get('to'),available=url.searchParams.get('available')==='1',extraordinary=url.searchParams.get('extraordinary')==='1',launch=url.searchParams.get('launch')==='1',canceled=url.searchParams.get('canceled')==='1';
   const headers={'Cache-Control':'no-store, max-age=0'};
@@ -67,7 +67,14 @@ export async function GET(req:Request){
   const sql=management?`SELECT ${fields},COALESCE(GROUP_CONCAT(tu.user_id), '') AS userIds FROM trips t JOIN vehicles v ON v.id=t.vehicle_id LEFT JOIN trip_users tu ON tu.trip_id=t.id${requestedFilter||` WHERE ${activeTrip('t')}`} GROUP BY t.id ORDER BY t.id DESC LIMIT 100`:`SELECT ${fields},COALESCE(GROUP_CONCAT(tu2.user_id), '') AS userIds FROM trips t JOIN vehicles v ON v.id=t.vehicle_id JOIN trip_users mine ON mine.trip_id=t.id AND mine.user_id=? LEFT JOIN trip_users tu2 ON tu2.trip_id=t.id${available?` WHERE ${activeTrip('t')} AND COALESCE(t.fuel_canceled_at,'')='' AND COALESCE(t.no_fueling,0)=0 AND COALESCE(t.arrival_date,t.travel_date)>=date('now') AND ${noFuelingForTrip('t')} AND NOT EXISTS (SELECT 1 FROM fuel_requests fr WHERE fr.trip_id=t.id AND fr.status IN ('pending','authorized'))`:` WHERE ${activeTrip('t')}`} GROUP BY t.id ORDER BY t.id DESC LIMIT 100`;
   const trips=management?await env.DB!.prepare(sql).all():await env.DB!.prepare(sql).bind(access.user.id).all();
   return Response.json({trips:(trips.results||[]).map((trip:any)=>({...trip,userIds:trip.userIds?String(trip.userIds).split(',').map(Number):[],externalDriverNames:trip.externalDriverNames?String(trip.externalDriverNames).split('|'):[],lateActivities:parseLateActivities(trip.lateActivities)}))},{headers});
- }catch{return Response.json({error:'Não foi possível consultar as viagens.'},{status:503,headers:{'Cache-Control':'no-store, max-age=0'}})}
+ }catch(error){
+  // A lista de viagens é a base dos históricos e das telas de abastecimento.
+  // Mantemos a mensagem segura para o usuário e registramos o detalhe técnico
+  // no log do Adm, caso uma futura migração de banco volte a falhar.
+  const detail=error instanceof Error?error.message:'Erro desconhecido ao consultar viagens.';
+  console.error('Falha em /api/trips:',error);
+  return Response.json({error:'Não foi possível consultar as viagens.',logDetails:detail},{status:503,headers:{'Cache-Control':'no-store, max-age=0'}})
+ }
 }
 
 async function loggedPOST(req:Request){
@@ -129,4 +136,5 @@ async function loggedPOST(req:Request){
  }
 }
 
+export const GET=withSystemLog(loggedGET);
 export const POST=withSystemLog(loggedPOST);
