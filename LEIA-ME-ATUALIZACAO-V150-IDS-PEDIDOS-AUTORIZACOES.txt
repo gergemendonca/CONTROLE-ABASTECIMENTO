@@ -1,0 +1,31 @@
+ATUALIZAÇÃO V150 — IDENTIFICAÇÃO E RASTREABILIDADE
+
+Esta atualização preserva os IDs técnicos internos e acrescenta códigos curtos,
+sequenciais e visíveis para conferência humana.
+
+Já existentes e mantidos:
+- CAR-001: carro
+- V-001: viagem
+- AB-001: abastecimento físico
+
+Incluídos nesta atualização:
+- PD-001: pedido de abastecimento
+- AU-001: autorização de abastecimento
+
+Como funciona:
+1. Os IDs internos continuam sendo usados nas relações e regras do banco.
+2. Os códigos visíveis servem apenas para operação, auditoria e conferência.
+3. Registros antigos recebem código automaticamente, sem alterar seus dados.
+4. Um pedido cria um PD; ao ser autorizado, recebe também um AU próprio.
+5. Nenhuma regra de cor, transferência de carro, abastecimento inicial ou
+   extraordinário foi modificada por esta atualização.
+
+Exemplo de rastreabilidade:
+V-111 → CAR-008 → PD-090 → AU-090 → AB-057
+
+Arquivos alterados:
+- app/lib/public-ids.ts
+- app/api/fuel-requests/route.ts
+- app/api/fuel-requests/[id]/authorize/route.ts
+- app/autorizacoes/page.tsx
+- app/pedidos/page.tsx

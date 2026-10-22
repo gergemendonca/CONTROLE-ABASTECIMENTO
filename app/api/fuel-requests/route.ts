@@ -7,6 +7,7 @@ import {ensureVehicleFuelAssignment} from '@/app/lib/vehicle-fueling-assignment'
 import {setVehicleFuelState,tripFueledSql} from '@/app/lib/vehicle-fuel-status';
 import {activeTrip,ensureTripCancellation} from '@/app/lib/trip-cancellation';
 import {requestUnusedSql} from '@/app/lib/fuel-request-usage';
+import {authorizationCodeSql,ensurePublicIds,requestCodeSql} from '@/app/lib/public-ids';
 
 type Item={tripId:number;liters:number;routeKm:number;paymentStatus:'total'|'parcial'|'nao_pago';outstandingCents:number;clientPaid?:boolean;extraordinary?:boolean};
 const paymentOk=(value:string)=>value==='total'||value==='parcial'||value==='nao_pago';
@@ -23,12 +24,12 @@ async function loggedPOST(req:Request){
  const access=await requireRole(req,'solicitante');
  if(!access.user)return Response.json({error:access.error},{status:403});
  try{
-  await ensureAuditNames();await ensureTripControl();await ensureTripCancellation();await ensureVehicleFuelAssignment();
+  await ensureAuditNames();await ensureTripControl();await ensureTripCancellation();await ensureVehicleFuelAssignment();await ensurePublicIds();
   const {requests}=await req.json() as {requests?:Item[]};
   const management=isManagementUser(access.user);
   if(!Array.isArray(requests)||requests.length===0)return Response.json({error:'Selecione ao menos uma viagem.'},{status:400});
   for(const item of requests)if(!Number.isSafeInteger(item.tripId)||!Number.isFinite(item.liters)||item.liters<=0||!Number.isSafeInteger(item.routeKm)||item.routeKm<0||!paymentOk(item.paymentStatus)||!Number.isSafeInteger(item.outstandingCents)||item.outstandingCents<0||typeof item.extraordinary!=='undefined'&&typeof item.extraordinary!=='boolean')return Response.json({error:'Confira litros, KM e pagamento de cada viagem.'},{status:400});
-  const now=new Date().toISOString(),created:number[]=[];
+  const now=new Date().toISOString(),created:number[]=[],requestCodes:string[]=[];
   for(const item of requests){
    const extraordinary=item.extraordinary===true;
    // Pedido comum respeita "sem abastecimento". O extraordinário é justamente
@@ -57,24 +58,28 @@ async function loggedPOST(req:Request){
    if(extraordinary)await env.DB!.prepare('UPDATE trips SET no_fueling=0 WHERE id=?').bind(item.tripId).run();
    const requestId=Number((inserted as any).meta?.last_row_id);
    if(!Number.isSafeInteger(requestId)||requestId<=0)return Response.json({error:'Não foi possível confirmar a criação do pedido.'},{status:503});
-   await setVehicleFuelState(trip!.vehicleId,'requested',{requestId,note:`Pedido ${requestId} criado para o carro`});
+   await env.DB!.prepare('INSERT OR IGNORE INTO fuel_request_public_ids (fuel_request_id) VALUES (?)').bind(requestId).run();
+   const requestCode=await env.DB!.prepare(`SELECT ${requestCodeSql('fr')} AS code FROM fuel_requests fr WHERE fr.id=?`).bind(requestId).first<{code:string}>();
+   const code=requestCode?.code||`PD-${String(requestId).padStart(3,'0')}`;
+   await setVehicleFuelState(trip!.vehicleId,'requested',{requestId,note:`${code} criado para o carro`});
    created.push(requestId);
+   requestCodes.push(code);
    if(isRetroactive)try{await ensureTripAudit();await recordTripAudit({tripId:item.tripId,action:'pedido_criado',actorName:access.user.name,effectiveAt:now,registeredAt:now,retroactive:true})}catch{}
    try{
     const associated=await env.DB!.prepare('SELECT user_id AS id FROM trip_users WHERE trip_id=?').bind(item.tripId).all<{id:number}>();
     const managers=await env.DB!.prepare("SELECT id FROM app_users WHERE active=1 AND group_name='gerencia'").all<{id:number}>();
     const authorizers=await env.DB!.prepare("SELECT id FROM app_users WHERE active=1 AND (roles LIKE '%\"autorizador\"%' OR roles LIKE '%\"admin\"%')").all<{id:number}>();
-    await notify([...associated.results.map(x=>x.id),...managers.results.map(x=>x.id),...authorizers.results.map(x=>x.id)],extraordinary?'Pedido extraordinário de abastecimento':isRetroactive?'Pedido retroativo de abastecimento':'Novo pedido de abastecimento',`${trip.controlNumber} — pedido ${extraordinary?'extraordinário ':isRetroactive?'retroativo ':''}feito por ${access.user.name} e pendente de autorização.`,`/autorizacoes?pedido=${requestId}`);
+    await notify([...associated.results.map(x=>x.id),...managers.results.map(x=>x.id),...authorizers.results.map(x=>x.id)],extraordinary?'Pedido extraordinário de abastecimento':isRetroactive?'Pedido retroativo de abastecimento':'Novo pedido de abastecimento',`${trip.controlNumber} — ${code} ${extraordinary?'extraordinário ':isRetroactive?'retroativo ':''}feito por ${access.user.name} e pendente de autorização.`,`/autorizacoes?pedido=${requestId}`);
    }catch{}
   }
-  return Response.json({ids:created,requestedBy:access.user.name});
+  return Response.json({ids:created,requestCodes,requestedBy:access.user.name});
  }catch{return Response.json({error:'Não foi possível criar o pedido de abastecimento.'},{status:503})}
 }
 
 export async function GET(req:Request){
  const access=await requireRole(req,'solicitante','autorizador','avisado');
  if(!access.user)return Response.json({error:access.error},{status:403});
- await ensureAuditNames();await ensureTripControl();await ensureTripCancellation();await ensureVehicleFuelAssignment();
+ await ensureAuditNames();await ensureTripControl();await ensureTripCancellation();await ensureVehicleFuelAssignment();await ensurePublicIds();
  const params=new URL(req.url).searchParams,requestedStatus=params.get('status'),status=requestedStatus==='pending'||requestedStatus==='authorized'?requestedStatus:null,requestId=Number(params.get('pedido')),byId=Number.isSafeInteger(requestId)&&requestId>0,tripId=Number(params.get('tripId')),byTrip=Number.isSafeInteger(tripId)&&tripId>0;
  const management=isManagementUser(access.user),canViewFinancial=management||access.user.roles.includes('autorizador');
  // Pedidos comuns deixam de ser pendência quando o período da viagem termina.
@@ -83,7 +88,7 @@ export async function GET(req:Request){
  // abastecimento inicial anterior não pode ocultar uma autorização extraordinária.
  let where=status==='authorized'?` WHERE f.status='authorized' AND ${requestUnusedSql('f','completed')}`:` WHERE f.status IN ('pending','authorized') AND ${requestUnusedSql('f','completed')} AND (f.status='authorized' OR COALESCE(t.arrival_date,t.travel_date)>=? OR COALESCE(f.retroactive,0)=1)`,binds:unknown[]=status==='authorized'?[]:[today()];
  if(byId){where+=' AND f.id=?';binds.push(requestId)}else if(byTrip){where+=' AND f.trip_id=?';binds.push(tripId)}else if(status&&status!=='authorized'){where+=' AND f.status=?';binds.push(status)}
- const q=`SELECT f.id,f.trip_id AS tripId,${controlSql('t')},f.liters,f.route_km AS routeKm,f.payment_status AS paymentStatus,f.outstanding_cents AS outstandingCents,COALESCE(f.client_paid,0) AS clientPaid,COALESCE(f.retroactive,0) AS retroactive,COALESCE(f.extraordinary,0) AS extraordinary,f.status,f.created_at AS createdAt,COALESCE(f.registered_at,f.created_at) AS registeredAt,f.authorized_at AS authorizedAt,(SELECT completed.created_at FROM fueling completed WHERE completed.vehicle_id=t.vehicle_id AND completed.trip_id=t.id ORDER BY completed.created_at DESC LIMIT 1) AS fueledAt,v.label AS vehicleLabel,t.route,t.departure_date AS departureDate,t.arrival_date AS arrivalDate,COALESCE(t.total_value_cents,0) AS totalValueCents,COALESCE(f.requested_by_name,u.name,'Não informado') AS requestedBy,COALESCE(f.authorized_by_name,a.name,'Não informado') AS authorizedBy FROM fuel_requests f JOIN trips t ON t.id=f.trip_id JOIN vehicles v ON v.id=t.vehicle_id LEFT JOIN app_users u ON u.id=f.requested_by LEFT JOIN app_users a ON a.id=f.authorized_by${where} AND ${activeTrip('t')} AND COALESCE(t.fuel_canceled_at,'')='' AND (COALESCE(t.no_fueling,0)=0 OR COALESCE(f.extraordinary,0)=1) AND f.status<>'canceled' ORDER BY CASE f.status WHEN 'pending' THEN 0 ELSE 1 END,f.created_at DESC`;
+ const q=`SELECT f.id,f.trip_id AS tripId,${requestCodeSql('f')} AS requestCode,${authorizationCodeSql('f')} AS authorizationCode,${controlSql('t')},f.liters,f.route_km AS routeKm,f.payment_status AS paymentStatus,f.outstanding_cents AS outstandingCents,COALESCE(f.client_paid,0) AS clientPaid,COALESCE(f.retroactive,0) AS retroactive,COALESCE(f.extraordinary,0) AS extraordinary,f.status,f.created_at AS createdAt,COALESCE(f.registered_at,f.created_at) AS registeredAt,f.authorized_at AS authorizedAt,(SELECT completed.created_at FROM fueling completed WHERE completed.vehicle_id=t.vehicle_id AND completed.trip_id=t.id ORDER BY completed.created_at DESC LIMIT 1) AS fueledAt,v.label AS vehicleLabel,t.route,t.departure_date AS departureDate,t.arrival_date AS arrivalDate,COALESCE(t.total_value_cents,0) AS totalValueCents,COALESCE(f.requested_by_name,u.name,'Não informado') AS requestedBy,COALESCE(f.authorized_by_name,a.name,'Não informado') AS authorizedBy FROM fuel_requests f JOIN trips t ON t.id=f.trip_id JOIN vehicles v ON v.id=t.vehicle_id LEFT JOIN app_users u ON u.id=f.requested_by LEFT JOIN app_users a ON a.id=f.authorized_by${where} AND ${activeTrip('t')} AND COALESCE(t.fuel_canceled_at,'')='' AND (COALESCE(t.no_fueling,0)=0 OR COALESCE(f.extraordinary,0)=1) AND f.status<>'canceled' ORDER BY CASE f.status WHEN 'pending' THEN 0 ELSE 1 END,f.created_at DESC`;
  const rows=await env.DB!.prepare(q).bind(...binds).all();
  return Response.json({requests:(rows.results||[]).map((item:any)=>canViewFinancial?item:{...item,totalValueCents:null,paymentStatus:null,outstandingCents:null}),canViewFinancial});
 }
