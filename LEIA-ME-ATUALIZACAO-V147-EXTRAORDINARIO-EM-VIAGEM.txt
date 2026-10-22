@@ -1,0 +1,20 @@
+ATUALIZAÇÃO V147 — ABASTECIMENTO EXTRAORDINÁRIO EM VIAGEM
+
+Nova regra
+- Adm ou Gerência podem solicitar abastecimento extraordinário para qualquer
+  viagem que esteja em curso.
+- Não é mais exigido abastecimento lançado na saída.
+- A viagem pode ter sido cadastrada inicialmente como "sem abastecimento":
+  se surgir a necessidade real durante o trajeto, ela poderá receber o pedido.
+
+Proteções mantidas
+- A viagem precisa estar ativa, não cancelada e dentro do período de saída/chegada.
+- Permanece permitido somente um pedido pendente ou autorizado ainda não usado
+  por carro, evitando duas solicitações para o mesmo veículo.
+- O pedido continua identificado como EXTRAORDINÁRIO, passa pela autorização e
+  gera novo AB-ID no lançamento.
+
+Status
+- Quando o pedido extraordinário é criado, a marca anterior "sem abastecimento"
+  é substituída pelo novo fluxo: laranja (solicitado), azul (autorizado) e
+  verde (abastecido).
