@@ -1,8 +1,17 @@
 import {withSystemLog} from '@/app/lib/system-log';
-import {clearSessionCookie,createSession,getSession,login,sessionCookie} from '../admin-auth';
-export async function GET(req:Request){return Response.json({user:await getSession(req)});}
-async function loggedPOST(req:Request){const {username,password}=await req.json() as {username?:string;password?:string};if(typeof username!=='string'||typeof password!=='string')return Response.json({error:'Informe usuário e senha.'},{status:400});const user=await login(username,password);if(!user)return Response.json({error:'Usuário ou senha incorretos.'},{status:401});return new Response(JSON.stringify({ok:true,user}),{headers:{'Content-Type':'application/json','Set-Cookie':sessionCookie(await createSession(user))}})}
-async function loggedDELETE(){return new Response(null,{status:204,headers:{'Set-Cookie':clearSessionCookie()}})}
-
-export const POST=withSystemLog(loggedPOST);
-export const DELETE=withSystemLog(loggedDELETE);
+import {env} from 'cloudflare:workers';
+import {getSession} from '../admin-auth';
+import {ensureTripFuelOptions} from '@/app/lib/trip-fuel-options';
+export async function GET(req:Request){
+ const user=await getSession(req);if(!user||user.bootstrap)return Response.json({notifications:[]});
+ try{await ensureTripFuelOptions();
+ const items=await env.DB!.prepare(`SELECT id,title,message,href,read_at AS readAt,created_at AS createdAt FROM app_notifications
+ WHERE user_id=? AND (href NOT LIKE '%pedido=%' OR NOT EXISTS (
+ SELECT 1 FROM fuel_requests fr JOIN trips t ON t.id=fr.trip_id
+ WHERE fr.id=CAST(substr(app_notifications.href,instr(app_notifications.href,'pedido=')+7) AS INTEGER) AND COALESCE(t.no_fueling,0)=1))
+ ORDER BY created_at DESC LIMIT 50`).bind(user.id).all();
+ return Response.json({notifications:items.results},{headers:{'Cache-Control':'no-store'}});
+ }catch{return Response.json({error:'Não foi possível consultar os avisos.'},{status:503});}
+}
+async function loggedPUT(req:Request){const user=await getSession(req);if(!user||user.bootstrap)return Response.json({error:'Faça login.'},{status:403});const {id}=await req.json() as {id:number};await env.DB!.prepare('UPDATE app_notifications SET read_at=? WHERE id=? AND user_id=?').bind(new Date().toISOString(),id,user.id).run();return Response.json({ok:true});}
+export const PUT=withSystemLog(loggedPUT);

@@ -1,7 +1,9 @@
+import {ensureTripFuelOptions} from './trip-fuel-options';
 import {env} from 'cloudflare:workers';
 
 /** Campos adicionados sem recriar a tabela, preservando todo o histórico existente. */
 export async function ensureTripCancellation(){
+ await ensureTripFuelOptions();
  const columns=await env.DB!.prepare('PRAGMA table_info(trips)').all<{name:string}>();
  const names=new Set((columns.results||[]).map(column=>column.name));
  if(!names.has('canceled_at'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN canceled_at text').run();

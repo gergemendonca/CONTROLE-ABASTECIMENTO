@@ -1,15 +1,84 @@
+import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
-import {isAdmin} from '../../admin-auth';
+import {isManagementUser,requireRole} from '../admin-auth';
 import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
+import {ensureTripAudit,recordTripAudit} from '@/app/lib/trip-audit';
+import {ensureVehicleFuelAssignment} from '@/app/lib/vehicle-fueling-assignment';
+import {setVehicleFuelState,tripFueledSql} from '@/app/lib/vehicle-fuel-status';
+import {activeTrip,ensureTripCancellation} from '@/app/lib/trip-cancellation';
 
-export const dynamic='force-dynamic';
-async function ensureRetroactiveFlag(){const columns=await env.DB!.prepare('PRAGMA table_info(fueling)').all<{name:string}>();if(!columns.results.some(column=>column.name==='retroactive'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN retroactive integer DEFAULT 0 NOT NULL').run();}
+type Item={tripId:number;liters:number;routeKm:number;paymentStatus:'total'|'parcial'|'nao_pago';outstandingCents:number;clientPaid?:boolean;extraordinary?:boolean};
+const paymentOk=(value:string)=>value==='total'||value==='parcial'||value==='nao_pago';
+const today=()=>{const parts=new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Bahia',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());const field=(name:string)=>parts.find(part=>part.type===name)?.value||'';return `${field('year')}-${field('month')}-${field('day')}`};
+async function notify(userIds:number[],title:string,message:string,href:string){
+ const ids=[...new Set(userIds)].filter(Number.isSafeInteger);
+ if(!ids.length)return;
+ // O pedido já salvo não pode ser desfeito apenas porque algum aviso falhou.
+ try{await env.DB!.batch(ids.map(userId=>env.DB!.prepare('INSERT INTO app_notifications (user_id,title,message,href,created_at) VALUES (?,?,?,?,?)').bind(userId,title,message,href,new Date().toISOString())))}catch{}
+}
+async function ensureAuditNames(){const columns=await env.DB!.prepare('PRAGMA table_info(fuel_requests)').all<{name:string}>(),names=new Set(columns.results.map(column=>column.name));if(!names.has('requested_by_name'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN requested_by_name text').run();if(!names.has('authorized_by_name'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN authorized_by_name text').run();if(!names.has('client_paid'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN client_paid integer DEFAULT 0 NOT NULL').run();if(!names.has('retroactive'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN retroactive integer DEFAULT 0 NOT NULL').run();if(!names.has('registered_at'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN registered_at text').run();if(!names.has('extraordinary'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN extraordinary integer DEFAULT 0 NOT NULL').run();}
+
+async function loggedPOST(req:Request){
+ const access=await requireRole(req,'solicitante');
+ if(!access.user)return Response.json({error:access.error},{status:403});
+ try{
+  await ensureAuditNames();await ensureTripControl();await ensureTripCancellation();await ensureVehicleFuelAssignment();
+  const {requests}=await req.json() as {requests?:Item[]};
+  const management=isManagementUser(access.user);
+  if(!Array.isArray(requests)||requests.length===0)return Response.json({error:'Selecione ao menos uma viagem.'},{status:400});
+  for(const item of requests)if(!Number.isSafeInteger(item.tripId)||!Number.isFinite(item.liters)||item.liters<=0||!Number.isSafeInteger(item.routeKm)||item.routeKm<0||!paymentOk(item.paymentStatus)||!Number.isSafeInteger(item.outstandingCents)||item.outstandingCents<0||typeof item.extraordinary!=='undefined'&&typeof item.extraordinary!=='boolean')return Response.json({error:'Confira litros, KM e pagamento de cada viagem.'},{status:400});
+  const now=new Date().toISOString(),created:number[]=[];
+  for(const item of requests){
+   const trip=await env.DB!.prepare(`SELECT vehicle_id AS vehicleId,COALESCE(departure_date,travel_date) AS departureDate,COALESCE(arrival_date,travel_date) AS arrivalDate,total_value_cents AS totalValueCents,${controlSql('trips')} FROM trips WHERE id=? AND ${activeTrip('trips')} AND COALESCE(fuel_canceled_at,'')='' AND COALESCE(no_fueling,0)=0`).bind(item.tripId).first<{vehicleId:number;departureDate:string;arrivalDate:string;totalValueCents:number;controlNumber:string}>();
+   // O pedido sempre é registrado no momento atual. A retroatividade vem da
+   // data da própria viagem, e não de uma data informada nesta etapa.
+   const isRetroactive=!!trip&&trip.arrivalDate<today();
+   if(!trip||(!management&&isRetroactive))return Response.json({error:'A viagem está sem abastecimento, cancelada ou fora do período permitido para seu usuário.'},{status:409});
+   const total=Number(trip.totalValueCents||0);
+   if(total<=0)return Response.json({error:'Esta viagem não possui valor total válido. Edite a viagem antes de solicitar autorização.'},{status:400});
+   if(item.paymentStatus==='total'&&item.outstandingCents!==0)return Response.json({error:'Viagem totalmente paga não pode ter valor em aberto.'},{status:400});
+   if(item.paymentStatus==='parcial'&&(item.outstandingCents<=0||item.outstandingCents>=total))return Response.json({error:'Em pagamento parcial, o valor em aberto deve ser maior que zero e menor que o valor total da viagem.'},{status:400});
+   if(item.paymentStatus==='nao_pago'&&item.outstandingCents!==total)return Response.json({error:'Em viagem não paga, o valor em aberto deve ser exatamente igual ao valor total da viagem.'},{status:400});
+   const extraordinary=item.extraordinary===true;
+   if(extraordinary&&!management)return Response.json({error:'Somente Adm ou Gerência pode solicitar abastecimento extraordinário.'},{status:403});
+   const alreadyFueled=await env.DB!.prepare(`SELECT t.id FROM trips t WHERE t.id=? AND ${tripFueledSql('t')} LIMIT 1`).bind(item.tripId).first();
+   const inProgress=!!trip&&trip.departureDate<=today()&&trip.arrivalDate>=today();
+   if(extraordinary&&(!alreadyFueled||!inProgress))return Response.json({error:'O abastecimento extraordinário só pode ser solicitado para viagem em curso que já possui abastecimento inicial lançado.'},{status:409});
+   if(alreadyFueled&&!extraordinary)return Response.json({error:'O veículo desta viagem já tem abastecimento inicial vinculado. Use a opção de abastecimento extraordinário se a viagem ainda estiver em curso.'},{status:409});
+   const existing=await env.DB!.prepare("SELECT fr.id FROM fuel_requests fr WHERE fr.vehicle_id=? AND fr.status IN ('pending','authorized') AND NOT EXISTS (SELECT 1 FROM fueling used WHERE used.fuel_request_id=fr.id) LIMIT 1").bind(trip!.vehicleId).first();
+   if(existing)return Response.json({error:'Este carro já possui um pedido pendente de autorização.'},{status:409});
+   const inserted=await env.DB!.prepare("INSERT INTO fuel_requests (trip_id,vehicle_id,requested_by,requested_by_name,liters,route_km,payment_status,outstanding_cents,client_paid,retroactive,extraordinary,status,created_at,registered_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,'pending',?,?)").bind(item.tripId,trip!.vehicleId,access.user.bootstrap?null:access.user.id,access.user.name,item.liters,item.routeKm,item.paymentStatus,item.outstandingCents,item.clientPaid?1:0,isRetroactive?1:0,extraordinary?1:0,now,now).run();
+   const requestId=Number((inserted as any).meta?.last_row_id);
+   if(!Number.isSafeInteger(requestId)||requestId<=0)return Response.json({error:'Não foi possível confirmar a criação do pedido.'},{status:503});
+   await setVehicleFuelState(trip!.vehicleId,'requested',{requestId,note:`Pedido ${requestId} criado para o carro`});
+   created.push(requestId);
+   if(isRetroactive)try{await ensureTripAudit();await recordTripAudit({tripId:item.tripId,action:'pedido_criado',actorName:access.user.name,effectiveAt:now,registeredAt:now,retroactive:true})}catch{}
+   try{
+    const associated=await env.DB!.prepare('SELECT user_id AS id FROM trip_users WHERE trip_id=?').bind(item.tripId).all<{id:number}>();
+    const managers=await env.DB!.prepare("SELECT id FROM app_users WHERE active=1 AND group_name='gerencia'").all<{id:number}>();
+    const authorizers=await env.DB!.prepare("SELECT id FROM app_users WHERE active=1 AND (roles LIKE '%\"autorizador\"%' OR roles LIKE '%\"admin\"%')").all<{id:number}>();
+    await notify([...associated.results.map(x=>x.id),...managers.results.map(x=>x.id),...authorizers.results.map(x=>x.id)],extraordinary?'Pedido extraordinário de abastecimento':isRetroactive?'Pedido retroativo de abastecimento':'Novo pedido de abastecimento',`${trip.controlNumber} — pedido ${extraordinary?'extraordinário ':isRetroactive?'retroativo ':''}feito por ${access.user.name} e pendente de autorização.`,`/autorizacoes?pedido=${requestId}`);
+   }catch{}
+  }
+  return Response.json({ids:created,requestedBy:access.user.name});
+ }catch{return Response.json({error:'Não foi possível criar o pedido de abastecimento.'},{status:503})}
+}
 
 export async function GET(req:Request){
- if(!await isAdmin(req))return Response.json({error:'Apenas o administrador pode consultar os abastecimentos feitos.'},{status:403});
- try{
-  await ensureTripControl();await ensureRetroactiveFlag();
-  const rows=await env.DB!.prepare(`SELECT f.id,v.label AS vehicleLabel,t.route,${controlSql('t')},f.driver,f.created_at AS createdAt,f.amount_cents AS amountCents,f.liters,COALESCE(f.retroactive,0) AS retroactive,COALESCE(fr.requested_by_name,requester.name,f.launched_by_name,'Não informado') AS requestedBy,COALESCE(f.launched_by_name,'Não informado') AS launchedBy,COALESCE(fr.authorized_by_name,a.name,'Não informado') AS authorizedBy,fr.authorized_at AS authorizedAt FROM fueling f JOIN vehicles v ON v.id=f.vehicle_id JOIN trips t ON t.id=f.trip_id LEFT JOIN fuel_requests fr ON fr.id=f.fuel_request_id LEFT JOIN app_users requester ON requester.id=fr.requested_by LEFT JOIN app_users a ON a.id=fr.authorized_by ORDER BY f.created_at DESC,f.id DESC`).all();
-  return Response.json({fueling:rows.results||[]});
- }catch{return Response.json({error:'Não foi possível carregar os abastecimentos feitos.'},{status:503})}
+ const access=await requireRole(req,'solicitante','autorizador','avisado');
+ if(!access.user)return Response.json({error:access.error},{status:403});
+ await ensureAuditNames();await ensureTripControl();await ensureTripCancellation();await ensureVehicleFuelAssignment();
+ const params=new URL(req.url).searchParams,requestedStatus=params.get('status'),status=requestedStatus==='pending'||requestedStatus==='authorized'?requestedStatus:null,requestId=Number(params.get('pedido')),byId=Number.isSafeInteger(requestId)&&requestId>0,tripId=Number(params.get('tripId')),byTrip=Number.isSafeInteger(tripId)&&tripId>0;
+ const management=isManagementUser(access.user),canViewFinancial=management||access.user.roles.includes('autorizador');
+ // Pedidos comuns deixam de ser pendência quando o período da viagem termina.
+ // Somente pedidos marcados como retroativos continuam disponíveis após isso.
+ // Um pedido só deixa de aparecer quando ele próprio foi usado. Um
+ // abastecimento inicial anterior não pode ocultar uma autorização extraordinária.
+ let where=status==='authorized'?" WHERE f.status='authorized' AND NOT EXISTS (SELECT 1 FROM fueling completed WHERE completed.fuel_request_id=f.id)":" WHERE f.status IN ('pending','authorized') AND NOT EXISTS (SELECT 1 FROM fueling completed WHERE completed.fuel_request_id=f.id) AND (f.status='authorized' OR COALESCE(t.arrival_date,t.travel_date)>=? OR COALESCE(f.retroactive,0)=1)",binds:unknown[]=status==='authorized'?[]:[today()];
+ if(byId){where+=' AND f.id=?';binds.push(requestId)}else if(byTrip){where+=' AND f.trip_id=?';binds.push(tripId)}else if(status&&status!=='authorized'){where+=' AND f.status=?';binds.push(status)}
+ const q=`SELECT f.id,f.trip_id AS tripId,${controlSql('t')},f.liters,f.route_km AS routeKm,f.payment_status AS paymentStatus,f.outstanding_cents AS outstandingCents,COALESCE(f.client_paid,0) AS clientPaid,COALESCE(f.retroactive,0) AS retroactive,COALESCE(f.extraordinary,0) AS extraordinary,f.status,f.created_at AS createdAt,COALESCE(f.registered_at,f.created_at) AS registeredAt,f.authorized_at AS authorizedAt,(SELECT completed.created_at FROM fueling completed WHERE completed.vehicle_id=t.vehicle_id AND completed.trip_id=t.id ORDER BY completed.created_at DESC LIMIT 1) AS fueledAt,v.label AS vehicleLabel,t.route,t.departure_date AS departureDate,t.arrival_date AS arrivalDate,COALESCE(t.total_value_cents,0) AS totalValueCents,COALESCE(f.requested_by_name,u.name,'Não informado') AS requestedBy,COALESCE(f.authorized_by_name,a.name,'Não informado') AS authorizedBy FROM fuel_requests f JOIN trips t ON t.id=f.trip_id JOIN vehicles v ON v.id=t.vehicle_id LEFT JOIN app_users u ON u.id=f.requested_by LEFT JOIN app_users a ON a.id=f.authorized_by${where} AND ${activeTrip('t')} AND COALESCE(t.fuel_canceled_at,'')='' AND COALESCE(t.no_fueling,0)=0 AND f.status<>'canceled' ORDER BY CASE f.status WHEN 'pending' THEN 0 ELSE 1 END,f.created_at DESC`;
+ const rows=await env.DB!.prepare(q).bind(...binds).all();
+ return Response.json({requests:(rows.results||[]).map((item:any)=>canViewFinancial?item:{...item,totalValueCents:null,paymentStatus:null,outstandingCents:null}),canViewFinancial});
 }
+
+export const POST=withSystemLog(loggedPOST);

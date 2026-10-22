@@ -1,20 +1,49 @@
 import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
-import {getSession,isAdmin,isManagementUser} from '../../admin-auth';
-import {ensureTripAudit,recordTripAudit} from '@/app/lib/trip-audit';
-import {activeTrip,ensureTripCancellation} from '@/app/lib/trip-cancellation';
+import {ensureUserPasswordPolicy,isAdmin} from '../../admin-auth';
+import {ensureVehicleFuelAssignment} from '@/app/lib/vehicle-fueling-assignment';
 
-const dateOk=(value:string)=>/^\d{4}-\d{2}-\d{2}$/.test(value);
-const today=()=>{const parts=new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Bahia',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());const field=(name:string)=>parts.find(part=>part.type===name)?.value||'';return `${field('year')}-${field('month')}-${field('day')}`};
-type Context={params:Promise<{id:string}>};
-type TripInput={vehicleId:number;departureDate:string;arrivalDate:string;route:string;totalKm:number;totalValueCents:number;associatedUserIds?:number[];externalDriverNames?:string[];allowConflicts?:boolean};
-const externalNames=(input:TripInput)=>[...new Set((input.externalDriverNames||[]).map(name=>String(name).trim()).filter(name=>name.length>0&&name.length<=100))];
-async function ensureExternalDrivers(){await env.DB!.prepare('CREATE TABLE IF NOT EXISTS trip_external_drivers (trip_id INTEGER NOT NULL, name TEXT NOT NULL, UNIQUE(trip_id,name))').run();}
-function valid(input:TripInput){const guests=externalNames(input);return Number.isInteger(input.vehicleId)&&dateOk(input.departureDate)&&dateOk(input.arrivalDate)&&input.arrivalDate>=input.departureDate&&typeof input.route==='string'&&!!input.route.trim()&&input.route.trim().length<=300&&Number.isSafeInteger(input.totalKm)&&input.totalKm>0&&Number.isSafeInteger(input.totalValueCents)&&input.totalValueCents>0&&Array.isArray(input.associatedUserIds)&&input.associatedUserIds.every(Number.isSafeInteger)&&Array.isArray(input.externalDriverNames)&&guests.length===(input.externalDriverNames||[]).filter(name=>String(name).trim()).length&&(input.associatedUserIds.length+guests.length)<=3}
-async function driverConflict(driverIds:number[],departureDate:string,arrivalDate:string,id:number){for(const driverId of driverIds){const row=await env.DB!.prepare(`SELECT t.id FROM trips t JOIN trip_users tu ON tu.trip_id=t.id WHERE tu.user_id=? AND t.id<>? AND ${activeTrip('t')} AND COALESCE(t.departure_date,t.travel_date)<=? AND COALESCE(t.arrival_date,t.travel_date)>=? LIMIT 1`).bind(driverId,id,arrivalDate,departureDate).first();if(row)return true}return false}
+async function loggedPOST(req:Request){
+ if(!await isAdmin(req))return Response.json({error:'Apenas administrador.'},{status:403});
+ try{
+  await env.DB!.batch([
+   env.DB!.prepare('CREATE TABLE IF NOT EXISTS app_users (id integer PRIMARY KEY AUTOINCREMENT NOT NULL,name text NOT NULL,username text NOT NULL,password_hash text NOT NULL,roles text NOT NULL,active integer DEFAULT 1 NOT NULL,created_at text NOT NULL)'),
+   env.DB!.prepare('CREATE TABLE IF NOT EXISTS app_settings (key text PRIMARY KEY NOT NULL,value text NOT NULL)'),
+   env.DB!.prepare('CREATE UNIQUE INDEX IF NOT EXISTS app_users_username_unique ON app_users (username)'),
+   env.DB!.prepare('CREATE TABLE IF NOT EXISTS trip_users (trip_id integer NOT NULL,user_id integer NOT NULL,FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE,FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE)'),
+   env.DB!.prepare('CREATE UNIQUE INDEX IF NOT EXISTS trip_users_trip_user_unique ON trip_users (trip_id,user_id)'),
+   env.DB!.prepare("CREATE TABLE IF NOT EXISTS fuel_requests (id integer PRIMARY KEY AUTOINCREMENT NOT NULL,trip_id integer NOT NULL,requested_by integer,liters real NOT NULL,route_km integer NOT NULL,payment_status text NOT NULL,outstanding_cents integer DEFAULT 0 NOT NULL,status text DEFAULT 'pending' NOT NULL,created_at text NOT NULL,authorized_by integer,authorized_at text,FOREIGN KEY (trip_id) REFERENCES trips(id),FOREIGN KEY (requested_by) REFERENCES app_users(id),FOREIGN KEY (authorized_by) REFERENCES app_users(id))"),
+   env.DB!.prepare('CREATE INDEX IF NOT EXISTS fuel_requests_status_idx ON fuel_requests (status)'),
+   env.DB!.prepare('CREATE TABLE IF NOT EXISTS app_notifications (id integer PRIMARY KEY AUTOINCREMENT NOT NULL,user_id integer NOT NULL,title text NOT NULL,message text NOT NULL,href text NOT NULL,read_at text,created_at text NOT NULL,FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE)'),
+   env.DB!.prepare('CREATE INDEX IF NOT EXISTS app_notifications_user_idx ON app_notifications (user_id,read_at)')
+  ]);
+  const columns=await env.DB!.prepare('PRAGMA table_info(app_users)').all<{name:string}>();
+  if(!columns.results.some(column=>column.name==='group_name'))await env.DB!.prepare("ALTER TABLE app_users ADD COLUMN group_name text DEFAULT 'motorista' NOT NULL").run();
+  if(!columns.results.some(column=>column.name==='password_change_required'))await env.DB!.prepare('ALTER TABLE app_users ADD COLUMN password_change_required integer DEFAULT 0 NOT NULL').run();
+  const tripColumns=await env.DB!.prepare('PRAGMA table_info(trips)').all<{name:string}>();
+  if(!tripColumns.results.some(column=>column.name==='total_km'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN total_km integer DEFAULT 0 NOT NULL').run();
+  if(!tripColumns.results.some(column=>column.name==='total_value_cents'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN total_value_cents integer DEFAULT 0 NOT NULL').run();
+  if(!tripColumns.results.some(column=>column.name==='canceled_at'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN canceled_at text').run();
+  if(!tripColumns.results.some(column=>column.name==='canceled_by'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN canceled_by integer').run();
+  if(!tripColumns.results.some(column=>column.name==='canceled_by_name'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN canceled_by_name text').run();
+  if(!tripColumns.results.some(column=>column.name==='cancel_reason'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN cancel_reason text').run();
+  const fuelingColumns=await env.DB!.prepare('PRAGMA table_info(fueling)').all<{name:string}>();
+  if(!fuelingColumns.results.some(column=>column.name==='trip_id'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN trip_id integer').run();
+  if(!fuelingColumns.results.some(column=>column.name==='fuel_request_id'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN fuel_request_id integer').run();
+  if(!fuelingColumns.results.some(column=>column.name==='launched_by'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN launched_by integer').run();
+  if(!fuelingColumns.results.some(column=>column.name==='launched_by_name'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN launched_by_name text').run();
+  if(!fuelingColumns.results.some(column=>column.name==='direct_launch'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN direct_launch integer DEFAULT 0 NOT NULL').run();
+  if(!fuelingColumns.results.some(column=>column.name==='authorization_observation'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN authorization_observation text').run();
+  const requestColumns=await env.DB!.prepare('PRAGMA table_info(fuel_requests)').all<{name:string}>();
+  if(!requestColumns.results.some(column=>column.name==='requested_by_name'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN requested_by_name text').run();
+  if(!requestColumns.results.some(column=>column.name==='authorized_by_name'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN authorized_by_name text').run();
+  if(!requestColumns.results.some(column=>column.name==='client_paid'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN client_paid integer DEFAULT 0 NOT NULL').run();
+  if(!requestColumns.results.some(column=>column.name==='extraordinary'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN extraordinary integer DEFAULT 0 NOT NULL').run();
+  await env.DB!.batch([env.DB!.prepare('CREATE INDEX IF NOT EXISTS fueling_trip_idx ON fueling (trip_id)'),env.DB!.prepare('CREATE INDEX IF NOT EXISTS fueling_request_idx ON fueling (fuel_request_id)')]);
+  // Atualização de produção: jamais apagar registros no setup automático.
+  await ensureUserPasswordPolicy();await ensureVehicleFuelAssignment();
+  return Response.json({ok:true,testDataCleared:false});
+ }catch{return Response.json({error:'Não foi possível preparar a atualização do banco.'},{status:503})}
+}
 
-async function loggedPUT(req:Request,{params}:Context){const session=await getSession(req);if(!isManagementUser(session)||session?.passwordChangeRequired)return Response.json({error:'Apenas Adm ou Gerência pode editar a viagem.'},{status:403});try{await ensureExternalDrivers();await ensureTripAudit();await ensureTripCancellation();const id=Number((await params).id),input=await req.json() as TripInput;if(!Number.isSafeInteger(id)||!valid(input))return Response.json({error:'Confira os dados da viagem, inclusive o valor total, e selecione no máximo três motoristas.'},{status:400});const selected=[...new Set(input.associatedUserIds||[])],guests=externalNames(input);const [vehicleBusy,driverBusy]=await Promise.all([env.DB!.prepare(`SELECT id FROM trips WHERE vehicle_id=? AND id<>? AND ${activeTrip('trips')} AND COALESCE(departure_date,travel_date)<=? AND COALESCE(arrival_date,travel_date)>=? LIMIT 1`).bind(input.vehicleId,id,input.arrivalDate,input.departureDate).first(),driverConflict(selected,input.departureDate,input.arrivalDate,id)]);if((vehicleBusy||driverBusy)&&!input.allowConflicts)return Response.json({error:'Já existe viagem para este carro ou motorista no período. Confirme a compatibilidade de horário antes de salvar.',conflicts:{vehicle:!!vehicleBusy,driver:driverBusy}},{status:409});const automatic=await env.DB!.prepare("SELECT id FROM app_users WHERE active=1 AND group_name IN ('adm','gerencia')").all<{id:number}>();const userIds=[...new Set([...selected,...automatic.results.map(user=>user.id)])];await env.DB!.batch([env.DB!.prepare('UPDATE trips SET vehicle_id=?,travel_date=?,departure_date=?,arrival_date=?,route=?,total_km=?,total_value_cents=? WHERE id=?').bind(input.vehicleId,input.departureDate,input.departureDate,input.arrivalDate,input.route.trim(),input.totalKm,input.totalValueCents,id),env.DB!.prepare('DELETE FROM trip_users WHERE trip_id=?').bind(id),env.DB!.prepare('DELETE FROM trip_external_drivers WHERE trip_id=?').bind(id),...userIds.map(userId=>env.DB!.prepare('INSERT OR IGNORE INTO trip_users (trip_id,user_id) VALUES (?,?)').bind(id,userId)),...guests.map(name=>env.DB!.prepare('INSERT OR IGNORE INTO trip_external_drivers (trip_id,name) VALUES (?,?)').bind(id,name))]);const retroactive=input.departureDate<today();if(retroactive)await recordTripAudit({tripId:id,action:'viagem_editada',actorName:session.name,effectiveAt:input.departureDate+'T12:00:00.000Z',registeredAt:new Date().toISOString(),retroactive:true});return Response.json({updated:true})}catch{return Response.json({error:'Não foi possível editar a viagem.'},{status:503})}}
-async function loggedDELETE(req:Request,{params}:Context){const session=await getSession(req);if(!isManagementUser(session)||session?.passwordChangeRequired)return Response.json({error:'Apenas Adm ou Gerência pode cancelar uma viagem.'},{status:403});try{await ensureTripCancellation();const id=Number((await params).id),body=await req.json().catch(()=>({})),reason=typeof body?.reason==='string'?body.reason.trim():'';if(!Number.isSafeInteger(id))return Response.json({error:'Viagem inválida.'},{status:400});if(reason.length<3||reason.length>500)return Response.json({error:'Informe o motivo do cancelamento (entre 3 e 500 caracteres).'},{status:400});const trip=await env.DB!.prepare(`SELECT id FROM trips WHERE id=? AND ${activeTrip('trips')}`).bind(id).first();if(!trip)return Response.json({error:'Esta viagem já está cancelada ou não existe.'},{status:404});const fueled=await env.DB!.prepare('SELECT id FROM fueling WHERE trip_id=? OR fuel_request_id IN (SELECT id FROM fuel_requests WHERE trip_id=?) LIMIT 1').bind(id,id).first();if(fueled)return Response.json({error:'Esta viagem já possui abastecimento concretizado e não pode ser cancelada.'},{status:409});const notices=await env.DB!.prepare('SELECT id FROM fuel_requests WHERE trip_id=?').bind(id).all<{id:number}>();const now=new Date().toISOString();await env.DB!.batch([env.DB!.prepare('UPDATE trips SET canceled_at=?,canceled_by=?,canceled_by_name=?,cancel_reason=? WHERE id=?').bind(now,session.id,session.name,reason,id),env.DB!.prepare("UPDATE fuel_requests SET status='canceled' WHERE trip_id=?").bind(id),...notices.results.map(item=>env.DB!.prepare('DELETE FROM app_notifications WHERE href=?').bind(`/autorizacoes?pedido=${item.id}`))]);return Response.json({canceled:true})}catch{return Response.json({error:'Não foi possível cancelar a viagem.'},{status:503})}}
-
-export const PUT=withSystemLog(loggedPUT);
-export const DELETE=withSystemLog(loggedDELETE);
+export const POST=withSystemLog(loggedPOST);

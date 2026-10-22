@@ -1,17 +1,29 @@
-import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
-import {clearSessionCookie,getSession,hashPassword} from '../../admin-auth';
+import {getSession,isManagementUser} from '../../admin-auth';
+import {ensureSystemLog,recordSystemLog} from '@/app/lib/system-log';
 
-async function loggedPUT(req:Request){
+export async function GET(req:Request){
  const user=await getSession(req);
- if(!user)return Response.json({error:'Faça login para alterar sua senha.'},{status:401});
- if(user.bootstrap)return Response.json({error:'A senha do administrador principal é configurada no Cloudflare.'},{status:403});
+ if(!user||user.passwordChangeRequired||!isManagementUser(user))return Response.json({error:'Acesso restrito ao Adm e Gerência.'},{status:403});
  try{
-  const {password}=await req.json() as {password?:string};
-  if(typeof password!=='string'||!/^\d{4}$/.test(password))return Response.json({error:'A nova senha deve conter exatamente 4 números.'},{status:400});
-  await env.DB!.prepare('UPDATE app_users SET password_hash=?,password_change_required=0 WHERE id=?').bind(await hashPassword(password),user.id).run();
-  return new Response(JSON.stringify({updated:true}),{headers:{'Content-Type':'application/json','Set-Cookie':clearSessionCookie()}});
- }catch{return Response.json({error:'Não foi possível alterar sua senha.'},{status:503});}
+  await ensureSystemLog();
+  const url=new URL(req.url),before=Number(url.searchParams.get('before')||0),search=(url.searchParams.get('search')||'').trim().slice(0,100);
+  const clauses:string[]=[],values:(string|number)[]=[];
+  if(before>0&&Number.isSafeInteger(before)){clauses.push('id<?');values.push(before);}
+  if(search){clauses.push('(instr(lower(actor_name),lower(?))>0 OR instr(lower(username),lower(?))>0 OR instr(lower(action),lower(?))>0 OR entity_id=?)');values.push(search,search,search,search);}
+  const result=await env.DB!.prepare(`SELECT id,actor_name AS actorName,username,action,path,method,status,entity_id AS entityId,created_at AS createdAt,details FROM system_log ${clauses.length?'WHERE '+clauses.join(' AND '):''} ORDER BY id DESC LIMIT 101`).bind(...values).all();
+  const records=result.results.slice(0,100);
+  return Response.json({records,nextBefore:result.results.length>100?records[records.length-1].id:null},{headers:{'Cache-Control':'no-store'}});
+ }catch{return Response.json({error:'Não foi possível consultar o log.'},{status:503});}
 }
-
-export const PUT=withSystemLog(loggedPUT);
+export async function POST(req:Request){
+ const user=await getSession(req);
+ if(!user||user.passwordChangeRequired)return Response.json({error:'Faça login.'},{status:401});
+ try{
+  const body=await req.json(),path=String(body.path||'').split('?')[0].slice(0,200);
+  if(!path.startsWith('/')||path.startsWith('//')||path.startsWith('/api/'))return Response.json({error:'Página inválida.'},{status:400});
+  const allowed=!path.startsWith('/admin')||isManagementUser(user);
+  await recordSystemLog({user,path,action:allowed?'Acessar página':'Acesso ao Adm negado',method:'GET',status:allowed?200:403});
+  return Response.json({ok:allowed},{status:allowed?200:403});
+ }catch{return Response.json({error:'Não foi possível registrar o acesso.'},{status:503});}
+}

@@ -1,8 +1,13 @@
-import {withSystemLog} from '@/app/lib/system-log';
-import { env } from 'cloudflare:workers';
+import {env} from 'cloudflare:workers';
 import {isAdmin} from '../admin-auth';
-const phone=(value:string)=>value.replace(/\D/g,'');
-export async function GET(req:Request){if(!await isAdmin(req))return Response.json({error:'Acesso restrito.'},{status:403});try{const contacts=await env.DB!.prepare('SELECT id,name,phone FROM whatsapp_contacts ORDER BY name COLLATE NOCASE').all();return Response.json({contacts:contacts.results})}catch{return Response.json({error:'Não foi possível carregar os contatos.'},{status:503})}}
-async function loggedPOST(req:Request){if(!await isAdmin(req))return Response.json({error:'Acesso restrito.'},{status:403});try{const body=await req.json() as {name?:string;phone?:string};const name=body.name?.trim(),number=phone(body.phone||'');if(!name||name.length>80||number.length<10||number.length>15)return Response.json({error:'Informe nome e WhatsApp com DDD.'},{status:400});const contact=await env.DB!.prepare('INSERT INTO whatsapp_contacts (name,phone) VALUES (?,?) RETURNING id,name,phone').bind(name,number).first();return Response.json({contact},{status:201})}catch{return Response.json({error:'Este número já está cadastrado.'},{status:409})}}
+import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
+import {activeTrip,ensureTripCancellation} from '@/app/lib/trip-cancellation';
 
-export const POST=withSystemLog(loggedPOST);
+export async function GET(req:Request){
+ if(!await isAdmin(req))return Response.json({error:'Acesso restrito.'},{status:403});
+ try{
+  await ensureTripControl();await ensureTripCancellation();
+  const trips=await env.DB!.prepare(`SELECT t.id,t.vehicle_id AS vehicleId,${controlSql('t')},v.label AS vehicleLabel,COALESCE(t.departure_date,t.travel_date) AS departureDate,COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,t.route FROM trips t JOIN vehicles v ON v.id=t.vehicle_id WHERE ${activeTrip('t')} AND COALESCE(t.fuel_canceled_at,'')='' AND COALESCE(t.no_fueling,0)=0 AND COALESCE(t.arrival_date,t.travel_date)>=date('now') ORDER BY departureDate ASC,t.id ASC`).all();
+  return Response.json({trips:trips.results});
+ }catch{return Response.json({error:'Não foi possível carregar as viagens pendentes.'},{status:503})}
+}

@@ -1,9 +1,23 @@
-import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
-import {ensureUserPasswordPolicy,hashPassword,isAdmin,roles} from '../admin-auth';
-const validRoles=(value:unknown)=>Array.isArray(value)&&value.length>0&&value.every(x=>typeof x==='string'&&roles.includes(x as typeof roles[number]));
-const groups=['motorista','adm','gerencia'] as const;const validGroup=(value:unknown):value is typeof groups[number]=>typeof value==='string'&&groups.includes(value as typeof groups[number]);
-export async function GET(req:Request){if(!await isAdmin(req))return Response.json({error:'Apenas administrador.'},{status:403});await ensureUserPasswordPolicy();const users=await env.DB!.prepare('SELECT id,name,username,group_name AS groupName,roles,active,created_at AS createdAt,password_change_required AS passwordChangeRequired FROM app_users ORDER BY name').all();return Response.json({users:users.results});}
-async function loggedPOST(req:Request){if(!await isAdmin(req))return Response.json({error:'Apenas administrador.'},{status:403});try{await ensureUserPasswordPolicy();const {name,username,userRoles,groupName}=await req.json() as {name?:string;username?:string;userRoles?:unknown;groupName?:unknown};const cleanUser=username?.trim().toLowerCase();if(!name?.trim()||!cleanUser||!validRoles(userRoles)||!validGroup(groupName))return Response.json({error:'Informe nome, grupo, usuário e ao menos uma função.'},{status:400});if(cleanUser==='admin')return Response.json({error:'O usuário admin é reservado para o acesso inicial.'},{status:400});const duplicate=await env.DB!.prepare('SELECT id FROM app_users WHERE username=? LIMIT 1').bind(cleanUser).first();if(duplicate)return Response.json({error:'Este nome de usuário já está em uso. Escolha outro.'},{status:409});const user=await env.DB!.prepare('INSERT INTO app_users (name,username,password_hash,group_name,roles,active,created_at,password_change_required) VALUES (?,?,?,?,?,1,?,1) RETURNING id,name,username,group_name AS groupName,roles,active,created_at AS createdAt,password_change_required AS passwordChangeRequired').bind(name.trim(),cleanUser,await hashPassword('1234'),groupName,JSON.stringify(userRoles),new Date().toISOString()).first();return Response.json({user});}catch{return Response.json({error:'Não foi possível cadastrar o usuário. Tente novamente.'},{status:503})}}
+import {isManagementUser,getSession} from '../admin-auth';
+import {activeTrip,ensureTripCancellation} from '@/app/lib/trip-cancellation';
+import {ensureVehicleFuelAssignment} from '@/app/lib/vehicle-fueling-assignment';
 
-export const POST=withSystemLog(loggedPOST);
+export async function GET(req:Request){
+ const session=await getSession(req);
+ if(!session||!isManagementUser(session)||session.passwordChangeRequired)return Response.json({error:'Acesso restrito.'},{status:403});
+ const params=new URL(req.url).searchParams,vehicleId=Number(params.get('vehicleId')),excludeTripId=Number(params.get('excludeTripId')||0),referenceDate=params.get('referenceDate')||'9999-12-31';
+ if(!Number.isSafeInteger(vehicleId)||vehicleId<=0)return Response.json({error:'Veículo inválido.'},{status:400});
+ try{
+  await ensureTripCancellation();await ensureVehicleFuelAssignment();
+  const previous=await env.DB!.prepare(`SELECT t.id,v.label AS vehicleLabel,t.route,
+   COALESCE(t.departure_date,t.travel_date) AS departureDate,COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,
+   EXISTS(SELECT 1 FROM fueling f WHERE f.vehicle_id=t.vehicle_id AND (f.trip_id=t.id OR f.original_trip_id=t.id OR (f.trip_id IS NULL AND f.original_trip_id IS NULL AND f.fuel_request_id IN (SELECT id FROM fuel_requests WHERE trip_id=t.id)))) AS hasFueling
+   FROM trips t JOIN vehicles v ON v.id=t.vehicle_id
+   WHERE t.vehicle_id=? AND t.id<>? AND ${activeTrip('t')}
+   ORDER BY CASE WHEN COALESCE(t.departure_date,t.travel_date)<=? THEN 0 ELSE 1 END,
+   CASE WHEN COALESCE(t.departure_date,t.travel_date)<=? THEN COALESCE(t.departure_date,t.travel_date) END DESC,
+   CASE WHEN COALESCE(t.departure_date,t.travel_date)>? THEN COALESCE(t.departure_date,t.travel_date) END ASC,t.id DESC LIMIT 1`).bind(vehicleId,excludeTripId,referenceDate,referenceDate,referenceDate).first();
+  return Response.json({previousTrip:previous||null});
+ }catch{return Response.json({error:'Não foi possível verificar o histórico do veículo.'},{status:503});}
+}

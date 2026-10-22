@@ -1,19 +1,23 @@
-import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
-import {isAdmin} from '../../admin-auth';
+import {getSession,isManagementUser} from '../../admin-auth';
+import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
 
-type Context={params:Promise<{id:string}>};
-const validId=(value:string)=>{const id=Number(value);return Number.isSafeInteger(id)&&id>0?id:null};
-
-async function loggedPUT(req:Request,{params}:Context){
- if(!await isAdmin(req))return Response.json({error:'Acesso restrito à Área Adm.'},{status:403});
- try{const id=validId((await params).id),{label}=await req.json() as {label?:string},clean=label?.trim();if(!id||!clean||clean.length>60)return Response.json({error:'Informe um veículo válido.'},{status:400});const vehicle=await env.DB!.prepare('SELECT id FROM vehicles WHERE id=?').bind(id).first();if(!vehicle)return Response.json({error:'Veículo não encontrado.'},{status:404});const duplicate=await env.DB!.prepare('SELECT id FROM vehicles WHERE lower(label)=lower(?) AND id<>? LIMIT 1').bind(clean,id).first();if(duplicate)return Response.json({error:'Já existe outro veículo com este nome ou placa.'},{status:409});const updated=await env.DB!.prepare('UPDATE vehicles SET label=? WHERE id=? RETURNING id,label').bind(clean,id).first();return Response.json({vehicle:updated});}catch{return Response.json({error:'Não foi possível editar o veículo.'},{status:503})}
+async function ensureRequestColumns(){
+ const columns=await env.DB!.prepare('PRAGMA table_info(fuel_requests)').all<{name:string}>(),names=new Set((columns.results||[]).map(column=>column.name));
+ if(!names.has('requested_by_name'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN requested_by_name text').run();
+ if(!names.has('client_paid'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN client_paid integer DEFAULT 0 NOT NULL').run();
 }
 
-async function loggedDELETE(req:Request,{params}:Context){
- if(!await isAdmin(req))return Response.json({error:'Acesso restrito à Área Adm.'},{status:403});
- try{const id=validId((await params).id);if(!id)return Response.json({error:'Veículo inválido.'},{status:400});const vehicle=await env.DB!.prepare('SELECT id FROM vehicles WHERE id=?').bind(id).first();if(!vehicle)return Response.json({error:'Veículo não encontrado.'},{status:404});const [trip,fueling]=await Promise.all([env.DB!.prepare('SELECT id FROM trips WHERE vehicle_id=? LIMIT 1').bind(id).first(),env.DB!.prepare('SELECT id FROM fueling WHERE vehicle_id=? LIMIT 1').bind(id).first()]);if(trip||fueling)return Response.json({error:'Este veículo possui viagens ou abastecimentos vinculados e não pode ser apagado.'},{status:409});await env.DB!.prepare('DELETE FROM vehicles WHERE id=?').bind(id).run();return Response.json({deleted:true});}catch{return Response.json({error:'Não foi possível apagar o veículo.'},{status:503})}
+export async function GET(req:Request){
+ const session=await getSession(req);
+ if(!session||!isManagementUser(session)||session.passwordChangeRequired)return Response.json({error:'Acesso restrito.'},{status:403});
+ try{
+  await ensureTripControl();await ensureRequestColumns();
+  const rows=await env.DB!.prepare(`SELECT f.id,f.trip_id AS tripId,f.liters,f.route_km AS routeKm,f.payment_status AS paymentStatus,f.outstanding_cents AS outstandingCents,COALESCE(f.client_paid,0) AS clientPaid,f.status,f.created_at AS createdAt,
+   ${controlSql('t')},v.label AS vehicleLabel,t.route,COALESCE(t.departure_date,t.travel_date) AS departureDate,COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,COALESCE(t.total_value_cents,0) AS totalValueCents,COALESCE(f.requested_by_name,u.name,'Não informado') AS requestedBy
+   FROM fuel_requests f JOIN trips t ON t.id=f.trip_id JOIN vehicles v ON v.id=t.vehicle_id LEFT JOIN app_users u ON u.id=f.requested_by
+   WHERE f.created_at>=datetime('now','-5 days') AND f.status IN ('pending','authorized') AND COALESCE(t.canceled_at,'')='' AND COALESCE(t.fuel_canceled_at,'')='' AND COALESCE(t.no_fueling,0)=0
+   ORDER BY f.created_at DESC,f.id DESC`).all();
+  return Response.json({requests:rows.results||[]});
+ }catch{return Response.json({error:'Não foi possível carregar os pedidos recentes.'},{status:503});}
 }
-
-export const PUT=withSystemLog(loggedPUT);
-export const DELETE=withSystemLog(loggedDELETE);

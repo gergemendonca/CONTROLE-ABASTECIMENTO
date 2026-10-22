@@ -1,56 +1,19 @@
-import {withSystemLog} from '@/app/lib/system-log';
+import {ensureEarlyFuelingNote} from '@/app/lib/fueling-range';
 import {env} from 'cloudflare:workers';
-import {ensureUserPasswordPolicy,isAdmin} from '../../admin-auth';
+import {isAdmin} from '../../admin-auth';
+import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
 
-async function loggedPOST(req:Request){
- if(!await isAdmin(req))return Response.json({error:'Apenas administrador.'},{status:403});
+import {ensureFuelingFunding} from '@/app/lib/trip-fuel-options';
+import {ensureVehicleFuelAssignment} from '@/app/lib/vehicle-fueling-assignment';
+import {ensurePublicIds,fuelingCodeSql,vehicleCodeSql} from '@/app/lib/public-ids';
+export const dynamic='force-dynamic';
+async function ensureRetroactiveFlag(){const columns=await env.DB!.prepare('PRAGMA table_info(fueling)').all<{name:string}>();if(!columns.results.some(column=>column.name==='retroactive'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN retroactive integer DEFAULT 0 NOT NULL').run();}
+
+export async function GET(req:Request){
+ if(!await isAdmin(req))return Response.json({error:'Apenas o administrador pode consultar os abastecimentos feitos.'},{status:403});
  try{
-  await env.DB!.batch([
-   env.DB!.prepare('CREATE TABLE IF NOT EXISTS app_users (id integer PRIMARY KEY AUTOINCREMENT NOT NULL,name text NOT NULL,username text NOT NULL,password_hash text NOT NULL,roles text NOT NULL,active integer DEFAULT 1 NOT NULL,created_at text NOT NULL)'),
-   env.DB!.prepare('CREATE TABLE IF NOT EXISTS app_settings (key text PRIMARY KEY NOT NULL,value text NOT NULL)'),
-   env.DB!.prepare('CREATE UNIQUE INDEX IF NOT EXISTS app_users_username_unique ON app_users (username)'),
-   env.DB!.prepare('CREATE TABLE IF NOT EXISTS trip_users (trip_id integer NOT NULL,user_id integer NOT NULL,FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE,FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE)'),
-   env.DB!.prepare('CREATE UNIQUE INDEX IF NOT EXISTS trip_users_trip_user_unique ON trip_users (trip_id,user_id)'),
-   env.DB!.prepare("CREATE TABLE IF NOT EXISTS fuel_requests (id integer PRIMARY KEY AUTOINCREMENT NOT NULL,trip_id integer NOT NULL,requested_by integer,liters real NOT NULL,route_km integer NOT NULL,payment_status text NOT NULL,outstanding_cents integer DEFAULT 0 NOT NULL,status text DEFAULT 'pending' NOT NULL,created_at text NOT NULL,authorized_by integer,authorized_at text,FOREIGN KEY (trip_id) REFERENCES trips(id),FOREIGN KEY (requested_by) REFERENCES app_users(id),FOREIGN KEY (authorized_by) REFERENCES app_users(id))"),
-   env.DB!.prepare('CREATE INDEX IF NOT EXISTS fuel_requests_status_idx ON fuel_requests (status)'),
-   env.DB!.prepare('CREATE TABLE IF NOT EXISTS app_notifications (id integer PRIMARY KEY AUTOINCREMENT NOT NULL,user_id integer NOT NULL,title text NOT NULL,message text NOT NULL,href text NOT NULL,read_at text,created_at text NOT NULL,FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE)'),
-   env.DB!.prepare('CREATE INDEX IF NOT EXISTS app_notifications_user_idx ON app_notifications (user_id,read_at)')
-  ]);
-  const columns=await env.DB!.prepare('PRAGMA table_info(app_users)').all<{name:string}>();
-  if(!columns.results.some(column=>column.name==='group_name'))await env.DB!.prepare("ALTER TABLE app_users ADD COLUMN group_name text DEFAULT 'motorista' NOT NULL").run();
-  if(!columns.results.some(column=>column.name==='password_change_required'))await env.DB!.prepare('ALTER TABLE app_users ADD COLUMN password_change_required integer DEFAULT 0 NOT NULL').run();
-  const tripColumns=await env.DB!.prepare('PRAGMA table_info(trips)').all<{name:string}>();
-  if(!tripColumns.results.some(column=>column.name==='total_km'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN total_km integer DEFAULT 0 NOT NULL').run();
-  if(!tripColumns.results.some(column=>column.name==='total_value_cents'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN total_value_cents integer DEFAULT 0 NOT NULL').run();
-  if(!tripColumns.results.some(column=>column.name==='canceled_at'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN canceled_at text').run();
-  if(!tripColumns.results.some(column=>column.name==='canceled_by'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN canceled_by integer').run();
-  if(!tripColumns.results.some(column=>column.name==='canceled_by_name'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN canceled_by_name text').run();
-  if(!tripColumns.results.some(column=>column.name==='cancel_reason'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN cancel_reason text').run();
-  const fuelingColumns=await env.DB!.prepare('PRAGMA table_info(fueling)').all<{name:string}>();
-  if(!fuelingColumns.results.some(column=>column.name==='trip_id'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN trip_id integer').run();
-  if(!fuelingColumns.results.some(column=>column.name==='fuel_request_id'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN fuel_request_id integer').run();
-  if(!fuelingColumns.results.some(column=>column.name==='launched_by'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN launched_by integer').run();
-  if(!fuelingColumns.results.some(column=>column.name==='launched_by_name'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN launched_by_name text').run();
-  if(!fuelingColumns.results.some(column=>column.name==='direct_launch'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN direct_launch integer DEFAULT 0 NOT NULL').run();
-  if(!fuelingColumns.results.some(column=>column.name==='authorization_observation'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN authorization_observation text').run();
-  const requestColumns=await env.DB!.prepare('PRAGMA table_info(fuel_requests)').all<{name:string}>();
-  if(!requestColumns.results.some(column=>column.name==='requested_by_name'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN requested_by_name text').run();
-  if(!requestColumns.results.some(column=>column.name==='authorized_by_name'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN authorized_by_name text').run();
-  if(!requestColumns.results.some(column=>column.name==='client_paid'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN client_paid integer DEFAULT 0 NOT NULL').run();
-  await env.DB!.batch([env.DB!.prepare('CREATE INDEX IF NOT EXISTS fueling_trip_idx ON fueling (trip_id)'),env.DB!.prepare('CREATE INDEX IF NOT EXISTS fueling_request_idx ON fueling (fuel_request_id)')]);
-  const resetMarker=await env.DB!.prepare("SELECT value FROM app_settings WHERE key='test_data_reset_v1'").first();
-  if(!resetMarker)await env.DB!.batch([
-   env.DB!.prepare('DELETE FROM fueling_items'),
-   env.DB!.prepare('DELETE FROM fueling'),
-   env.DB!.prepare('DELETE FROM app_notifications'),
-   env.DB!.prepare('DELETE FROM fuel_requests'),
-   env.DB!.prepare('DELETE FROM trip_users'),
-   env.DB!.prepare('DELETE FROM trips'),
-   env.DB!.prepare("INSERT INTO app_settings (key,value) VALUES ('test_data_reset_v1',?)").bind(new Date().toISOString())
-  ]);
-  await ensureUserPasswordPolicy();
-  return Response.json({ok:true,testDataCleared:!resetMarker});
- }catch{return Response.json({error:'Não foi possível preparar a atualização do banco.'},{status:503})}
+  await ensureTripControl();await ensurePublicIds();await ensureRetroactiveFlag();await ensureEarlyFuelingNote();await ensureFuelingFunding();await ensureVehicleFuelAssignment();
+  const rows=await env.DB!.prepare(`SELECT f.id,${fuelingCodeSql('f')} AS fuelingCode,COALESCE(f.paid_by_third_party,fr.client_paid,0) AS clientPaid,f.early_note AS earlyNote,${vehicleCodeSql('v')} AS vehicleCode,v.label AS vehicleLabel,COALESCE(t.route,'AGUARDANDO REALOCAÇÃO PARA VIAGEM') AS route,${controlSql('t')},f.driver,f.created_at AS createdAt,f.amount_cents AS amountCents,f.liters,f.odometer AS odometer,COALESCE(t.total_km,0) AS totalKm,COALESCE(f.retroactive,0) AS retroactive,COALESCE(fr.requested_by_name,requester.name,f.launched_by_name,'Não informado') AS requestedBy,COALESCE(f.launched_by_name,'Não informado') AS launchedBy,COALESCE(fr.authorized_by_name,a.name,'Não informado') AS authorizedBy,fr.authorized_at AS authorizedAt,COALESCE((SELECT GROUP_CONCAT('V-' || printf('%03d',used_trip.id),' · ') FROM fueling_usage usage JOIN trips used_trip ON used_trip.id=usage.used_by_trip_id WHERE usage.fueling_id=f.id),'') AS usedByTrips FROM fueling f JOIN vehicles v ON v.id=f.vehicle_id LEFT JOIN trips t ON t.id=f.trip_id LEFT JOIN fuel_requests fr ON fr.id=f.fuel_request_id LEFT JOIN app_users requester ON requester.id=fr.requested_by LEFT JOIN app_users a ON a.id=fr.authorized_by ORDER BY f.created_at DESC,f.id DESC`).all();
+  return Response.json({fueling:rows.results||[]});
+ }catch{return Response.json({error:'Não foi possível carregar os abastecimentos feitos.'},{status:503})}
 }
-
-export const POST=withSystemLog(loggedPOST);

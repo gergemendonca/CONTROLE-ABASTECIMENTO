@@ -1,0 +1,18 @@
+ATUALIZAÇÃO V146 — IDs curtos nos cards
+
+O que muda visualmente
+- V-ID da viagem passa a aparecer em destaque como V-001, V-002, V-1000 etc.
+- Cada carro recebe CAR-001, CAR-002, CAR-1000 etc.
+- Cada abastecimento recebe AB-001, AB-002, AB-1000 etc.
+- Na tela "Editar viagens", o card exibe V-ID em primeiro lugar, depois CAR-ID
+  com o número operacional do veículo e, quando houver, o AB-ID vinculado.
+- Na tela "Abastecimentos feitos", o card mostra os três vínculos juntos:
+  V-ID, CAR-ID e AB-ID.
+
+Segurança da atualização
+- Os IDs técnicos existentes não são apagados nem modificados.
+- Os códigos curtos são uma camada de consulta humana, criada em tabelas próprias.
+- Pedidos, autorizações, lançamentos, status de cor e troca de carros continuam
+  usando as rotinas atuais, sem mudança de regra.
+- Registros antigos entram na sequência pela ordem de cadastro; novos registros
+  recebem o próximo número automaticamente.
