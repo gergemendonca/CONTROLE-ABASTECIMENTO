@@ -1,0 +1,15 @@
+ATUALIZAÇÃO V149 — CORREÇÃO DE PENDÊNCIA ANTIGA
+
+Caso identificado
+- V-111 / CAR-008 / veículo 28000, de 20/10 a 24/10, estava ativo e abastecido
+  com AB-057, mas não aparecia para abastecimento extraordinário.
+- Um pedido antigo da V-110 permanecia marcado como autorizado, apesar de o
+  abastecimento AB-055 já ter sido lançado para aquela viagem.
+
+Correção
+- Um pedido agora é considerado utilizado também quando existe abastecimento
+  físico para a mesma viagem e carro, realizado após a criação do pedido,
+  mesmo se o lançamento antigo não tiver gravado o número do pedido.
+- Isso impede pendências antigas "soltas" de bloquearem o carro em uma nova
+  solicitação extraordinária.
+- A proteção contra pedidos realmente pendentes ou autorizados continua ativa.

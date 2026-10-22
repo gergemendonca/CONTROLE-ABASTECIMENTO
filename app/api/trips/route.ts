@@ -12,6 +12,7 @@ import {ensureVehicleFuelAssignment,planVehicleFuelTransfer,VehicleTransferError
 import {tripFuelStateSql,tripFueledSql,tripNotFueledSql} from '@/app/lib/vehicle-fuel-status';
 import {restoredLiters} from '@/app/lib/trip-fuel-options';
 import {ensurePublicIds,fuelingCodeSql,vehicleCodeSql,vehicleIdCodeSql} from '@/app/lib/public-ids';
+import {requestUnusedSql} from '@/app/lib/fuel-request-usage';
 type TripInput={noFueling?:boolean;plannedLiters?:number|null;paymentStatus?:string;outstandingCents?:number;vehicleId:number;departureDate:string;arrivalDate:string;route:string;totalKm:number;totalValueCents:number;associatedUserIds?:number[];externalDriverNames?:string[];allowConflicts?:boolean;previousTripId?:number|null;previousTripOccurred?:boolean|null;newFuelingIntent?:'request'|'skip'|null;displacedTripId?:number|null;replacementVehicleId?:number|null;replacementPreviousTripId?:number|null;replacementPreviousTripOccurred?:boolean|null};
 const rangeConflict=(vehicleId:number,departureDate:string,arrivalDate:string)=>env.DB!.prepare(`SELECT id FROM trips WHERE vehicle_id=? AND ${activeTrip('trips')} AND COALESCE(fuel_canceled_at,'')='' AND COALESCE(departure_date,travel_date)<=? AND COALESCE(arrival_date,travel_date)>=? LIMIT 1`).bind(vehicleId,arrivalDate,departureDate).first();
 // Status sempre confere o veículo físico que recebeu o combustível.
@@ -46,7 +47,8 @@ async function loggedGET(req:Request){
    const management=isManagementUser(access.user);
    const scope=management?'':` AND EXISTS (SELECT 1 FROM trip_users mine WHERE mine.trip_id=trips.id AND mine.user_id=?)`;
    const completionScope=management?'1=1':`(${noFuelingForTrip('trips')} OR (COALESCE(departure_date,travel_date)<=date('now','-3 hours') AND COALESCE(arrival_date,travel_date)>=date('now','-3 hours')))`;
-   const sql=`SELECT ${compactFields} FROM trips WHERE vehicle_id=? AND ${activeTrip('trips')} AND COALESCE(fuel_canceled_at,'')='' AND COALESCE(no_fueling,0)=0 AND ${completionScope} AND (${management?'1=1':"COALESCE(arrival_date,travel_date)>=date('now','-3 hours') OR EXISTS (SELECT 1 FROM fuel_requests fr WHERE fr.trip_id=trips.id AND fr.status='authorized' AND COALESCE(fr.authorized_at,fr.created_at)>=datetime('now','-5 days') AND NOT EXISTS (SELECT 1 FROM fueling used WHERE used.fuel_request_id=fr.id))"})${scope} ORDER BY COALESCE(departure_date,travel_date) DESC,id DESC`;
+   const activeAuthorization=`COALESCE(arrival_date,travel_date)>=date('now','-3 hours') OR EXISTS (SELECT 1 FROM fuel_requests fr WHERE fr.trip_id=trips.id AND fr.status='authorized' AND COALESCE(fr.authorized_at,fr.created_at)>=datetime('now','-5 days') AND ${requestUnusedSql('fr')})`;
+   const sql=`SELECT ${compactFields} FROM trips WHERE vehicle_id=? AND ${activeTrip('trips')} AND COALESCE(fuel_canceled_at,'')='' AND COALESCE(no_fueling,0)=0 AND ${completionScope} AND ${management?'1=1':activeAuthorization}${scope} ORDER BY COALESCE(departure_date,travel_date) DESC,id DESC`;
    const rows=management?await env.DB!.prepare(sql).bind(vehicleId).all():await env.DB!.prepare(sql).bind(vehicleId,access.user.id).all();
    return Response.json({trips:(rows.results||[]).map((trip:any)=>({...trip,associatedDriverNames:trip.associatedDriverNames?String(trip.associatedDriverNames).split(','):[],externalDriverNames:trip.externalDriverNames?String(trip.externalDriverNames).split('|'):[]}))},{headers});
   }
@@ -68,7 +70,7 @@ async function loggedGET(req:Request){
    return Response.json({trips:(rows.results||[]).map((trip:any)=>({...trip,userIds:[],associatedDriverNames:trip.associatedDriverNames?String(trip.associatedDriverNames).split(','):[],externalDriverNames:trip.externalDriverNames?String(trip.externalDriverNames).split('|'):[]}))},{headers});
   }
   const inProgress=`COALESCE(t.departure_date,t.travel_date)<=date('now','-3 hours') AND COALESCE(t.arrival_date,t.travel_date)>=date('now','-3 hours')`;
-  const unusedOpenRequest=`NOT EXISTS (SELECT 1 FROM fuel_requests fr WHERE fr.vehicle_id=t.vehicle_id AND fr.status IN ('pending','authorized') AND NOT EXISTS (SELECT 1 FROM fueling used WHERE used.fuel_request_id=fr.id))`;
+  const unusedOpenRequest=`NOT EXISTS (SELECT 1 FROM fuel_requests fr WHERE fr.vehicle_id=t.vehicle_id AND fr.status IN ('pending','authorized') AND ${requestUnusedSql('fr')})`;
   // Extraordinário atende uma necessidade surgida no trajeto. Basta a viagem
   // estar em curso; ela pode ter iniciado sem abastecimento planejado.
   // Continua existindo somente um pedido aberto por carro para evitar duplicidade.

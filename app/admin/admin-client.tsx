@@ -676,12 +676,15 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                     data-trip-status={completed ? "completed" : trip.noFueling ? "not_required" : trip.fuelCanceledAt ? "canceled" : trip.requestStatus || "missing"}
                     style={{backgroundColor:completed?"#e7edf3":status.background,borderColor:completed?"#94a3b8":status.border,color:"#0f172a"}}
                   >
-                    <p className="inline-flex rounded-full bg-[#102b43] px-3 py-1 text-base font-extrabold text-white">{trip.controlNumber||`V-${String(trip.id).padStart(3,"0")}`}</p>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <p className="inline-flex rounded-full bg-[#102b43] px-3 py-1 text-base font-extrabold text-white">{trip.controlNumber||`V-${String(trip.id).padStart(3,"0")}`}</p>
+                      <p className="text-2xl font-extrabold leading-tight text-slate-950">{trip.vehicleLabel}</p>
+                    </div>
                     {completed&&<p className="mt-3 inline-flex rounded-full border-2 border-slate-500 bg-slate-200 px-3 py-2 text-base font-extrabold text-slate-800">✓ Viagem realizada</p>}
                     {Number(trip.hasLateActivity)===1&&<p className="mt-3 inline-flex items-center gap-2 rounded-xl border-2 border-amber-500 bg-amber-100 px-3 py-2 text-base font-extrabold text-amber-950"><span className="text-xl" aria-hidden="true">⚠</span>MOVIMENTAÇÃO FORA DO PRAZO</p>}
                     {(trip.lateActivities||[]).map((activity,index)=><p key={index} className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-950">⚠ {lateActionLabel(activity.action)} por {activity.actorName}. Data do fato: {dateTime(activity.effectiveAt)} · registrado no app: {dateTime(activity.registeredAt)}.</p>)}
                     {trip.fuelCanceledAt&&<p className="mt-3 text-base font-semibold">Cancelado por {trip.fuelCanceledBy||"Não informado"} em {dateTime(trip.fuelCanceledAt)}. Motivo: {trip.fuelCancelReason}</p>}
-                    <p className="mt-3 flex flex-wrap gap-2 text-base font-extrabold"><span className="rounded-full bg-white/75 px-3 py-1">{trip.vehicleCode||`CAR-${String(trip.vehicleId).padStart(3,"0")}`}</span><span className="rounded-full bg-white/75 px-3 py-1">Veículo {trip.vehicleLabel}</span>{trip.fuelingCode&&<span className="rounded-full bg-emerald-700 px-3 py-1 text-white">{trip.fuelingCode}</span>}</p>
+                    <p className="mt-2 flex flex-wrap gap-2 text-base font-extrabold"><span className="rounded-full bg-white/75 px-3 py-1">{trip.vehicleCode||`CAR-${String(trip.vehicleId).padStart(3,"0")}`}</span><span className={`rounded-full px-3 py-1 ${trip.fuelingCode?'bg-emerald-700 text-white':'bg-white/75 text-slate-700'}`}>{trip.fuelingCode||'Sem AB-ID'}</span></p>
                     <p className="mt-1 text-lg">
                       {formatDate(trip.departureDate)} até{" "}
                       {formatDate(trip.arrivalDate)}
