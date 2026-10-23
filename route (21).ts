@@ -1,29 +1,50 @@
+import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
-import {getSession,isManagementUser} from '../../admin-auth';
-import {ensureSystemLog,recordSystemLog} from '@/app/lib/system-log';
+import {ensureUserPasswordPolicy,isAdmin} from '../../admin-auth';
+import {ensureVehicleFuelAssignment} from '@/app/lib/vehicle-fueling-assignment';
+import {ensureTripCancellation} from '@/app/lib/trip-cancellation';
 
-export async function GET(req:Request){
- const user=await getSession(req);
- if(!user||user.passwordChangeRequired||!isManagementUser(user))return Response.json({error:'Acesso restrito ao Adm e Gerência.'},{status:403});
+async function loggedPOST(req:Request){
+ if(!await isAdmin(req))return Response.json({error:'Apenas administrador.'},{status:403});
  try{
-  await ensureSystemLog();
-  const url=new URL(req.url),before=Number(url.searchParams.get('before')||0),search=(url.searchParams.get('search')||'').trim().slice(0,100);
-  const clauses:string[]=[],values:(string|number)[]=[];
-  if(before>0&&Number.isSafeInteger(before)){clauses.push('id<?');values.push(before);}
-  if(search){clauses.push('(instr(lower(actor_name),lower(?))>0 OR instr(lower(username),lower(?))>0 OR instr(lower(action),lower(?))>0 OR entity_id=?)');values.push(search,search,search,search);}
-  const result=await env.DB!.prepare(`SELECT id,actor_name AS actorName,username,action,path,method,status,entity_id AS entityId,created_at AS createdAt,details FROM system_log ${clauses.length?'WHERE '+clauses.join(' AND '):''} ORDER BY id DESC LIMIT 101`).bind(...values).all();
-  const records=result.results.slice(0,100);
-  return Response.json({records,nextBefore:result.results.length>100?records[records.length-1].id:null},{headers:{'Cache-Control':'no-store'}});
- }catch{return Response.json({error:'Não foi possível consultar o log.'},{status:503});}
+  await env.DB!.batch([
+   env.DB!.prepare('CREATE TABLE IF NOT EXISTS app_users (id integer PRIMARY KEY AUTOINCREMENT NOT NULL,name text NOT NULL,username text NOT NULL,password_hash text NOT NULL,roles text NOT NULL,active integer DEFAULT 1 NOT NULL,created_at text NOT NULL)'),
+   env.DB!.prepare('CREATE TABLE IF NOT EXISTS app_settings (key text PRIMARY KEY NOT NULL,value text NOT NULL)'),
+   env.DB!.prepare('CREATE UNIQUE INDEX IF NOT EXISTS app_users_username_unique ON app_users (username)'),
+   env.DB!.prepare('CREATE TABLE IF NOT EXISTS trip_users (trip_id integer NOT NULL,user_id integer NOT NULL,FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE,FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE)'),
+   env.DB!.prepare('CREATE UNIQUE INDEX IF NOT EXISTS trip_users_trip_user_unique ON trip_users (trip_id,user_id)'),
+   env.DB!.prepare("CREATE TABLE IF NOT EXISTS fuel_requests (id integer PRIMARY KEY AUTOINCREMENT NOT NULL,trip_id integer NOT NULL,requested_by integer,liters real NOT NULL,route_km integer NOT NULL,payment_status text NOT NULL,outstanding_cents integer DEFAULT 0 NOT NULL,status text DEFAULT 'pending' NOT NULL,created_at text NOT NULL,authorized_by integer,authorized_at text,FOREIGN KEY (trip_id) REFERENCES trips(id),FOREIGN KEY (requested_by) REFERENCES app_users(id),FOREIGN KEY (authorized_by) REFERENCES app_users(id))"),
+   env.DB!.prepare('CREATE INDEX IF NOT EXISTS fuel_requests_status_idx ON fuel_requests (status)'),
+   env.DB!.prepare('CREATE TABLE IF NOT EXISTS app_notifications (id integer PRIMARY KEY AUTOINCREMENT NOT NULL,user_id integer NOT NULL,title text NOT NULL,message text NOT NULL,href text NOT NULL,read_at text,created_at text NOT NULL,FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE)'),
+   env.DB!.prepare('CREATE INDEX IF NOT EXISTS app_notifications_user_idx ON app_notifications (user_id,read_at)')
+  ]);
+  const columns=await env.DB!.prepare('PRAGMA table_info(app_users)').all<{name:string}>();
+  if(!columns.results.some(column=>column.name==='group_name'))await env.DB!.prepare("ALTER TABLE app_users ADD COLUMN group_name text DEFAULT 'motorista' NOT NULL").run();
+  if(!columns.results.some(column=>column.name==='password_change_required'))await env.DB!.prepare('ALTER TABLE app_users ADD COLUMN password_change_required integer DEFAULT 0 NOT NULL').run();
+  const tripColumns=await env.DB!.prepare('PRAGMA table_info(trips)').all<{name:string}>();
+  if(!tripColumns.results.some(column=>column.name==='total_km'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN total_km integer DEFAULT 0 NOT NULL').run();
+  if(!tripColumns.results.some(column=>column.name==='total_value_cents'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN total_value_cents integer DEFAULT 0 NOT NULL').run();
+  if(!tripColumns.results.some(column=>column.name==='canceled_at'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN canceled_at text').run();
+  if(!tripColumns.results.some(column=>column.name==='canceled_by'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN canceled_by integer').run();
+  if(!tripColumns.results.some(column=>column.name==='canceled_by_name'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN canceled_by_name text').run();
+  if(!tripColumns.results.some(column=>column.name==='cancel_reason'))await env.DB!.prepare('ALTER TABLE trips ADD COLUMN cancel_reason text').run();
+  const fuelingColumns=await env.DB!.prepare('PRAGMA table_info(fueling)').all<{name:string}>();
+  if(!fuelingColumns.results.some(column=>column.name==='trip_id'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN trip_id integer').run();
+  if(!fuelingColumns.results.some(column=>column.name==='fuel_request_id'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN fuel_request_id integer').run();
+  if(!fuelingColumns.results.some(column=>column.name==='launched_by'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN launched_by integer').run();
+  if(!fuelingColumns.results.some(column=>column.name==='launched_by_name'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN launched_by_name text').run();
+  if(!fuelingColumns.results.some(column=>column.name==='direct_launch'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN direct_launch integer DEFAULT 0 NOT NULL').run();
+  if(!fuelingColumns.results.some(column=>column.name==='authorization_observation'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN authorization_observation text').run();
+  const requestColumns=await env.DB!.prepare('PRAGMA table_info(fuel_requests)').all<{name:string}>();
+  if(!requestColumns.results.some(column=>column.name==='requested_by_name'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN requested_by_name text').run();
+  if(!requestColumns.results.some(column=>column.name==='authorized_by_name'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN authorized_by_name text').run();
+  if(!requestColumns.results.some(column=>column.name==='client_paid'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN client_paid integer DEFAULT 0 NOT NULL').run();
+  if(!requestColumns.results.some(column=>column.name==='extraordinary'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN extraordinary integer DEFAULT 0 NOT NULL').run();
+  await env.DB!.batch([env.DB!.prepare('CREATE INDEX IF NOT EXISTS fueling_trip_idx ON fueling (trip_id)'),env.DB!.prepare('CREATE INDEX IF NOT EXISTS fueling_request_idx ON fueling (fuel_request_id)')]);
+  // Atualização de produção: jamais apagar registros no setup automático.
+  await ensureUserPasswordPolicy();await ensureTripCancellation();await ensureVehicleFuelAssignment();
+  return Response.json({ok:true,testDataCleared:false});
+ }catch{return Response.json({error:'Não foi possível preparar a atualização do banco.'},{status:503})}
 }
-export async function POST(req:Request){
- const user=await getSession(req);
- if(!user||user.passwordChangeRequired)return Response.json({error:'Faça login.'},{status:401});
- try{
-  const body=await req.json(),path=String(body.path||'').split('?')[0].slice(0,200);
-  if(!path.startsWith('/')||path.startsWith('//')||path.startsWith('/api/'))return Response.json({error:'Página inválida.'},{status:400});
-  const allowed=!path.startsWith('/admin')||isManagementUser(user);
-  await recordSystemLog({user,path,action:allowed?'Acessar página':'Acesso ao Adm negado',method:'GET',status:allowed?200:403});
-  return Response.json({ok:allowed},{status:allowed?200:403});
- }catch{return Response.json({error:'Não foi possível registrar o acesso.'},{status:503});}
-}
+
+export const POST=withSystemLog(loggedPOST);

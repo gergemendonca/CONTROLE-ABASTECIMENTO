@@ -1,8 +1,20 @@
 import {withSystemLog} from '@/app/lib/system-log';
-import { env } from 'cloudflare:workers';
-import {isAdmin} from '../admin-auth';
-const phone=(value:string)=>value.replace(/\D/g,'');
-export async function GET(req:Request){if(!await isAdmin(req))return Response.json({error:'Acesso restrito.'},{status:403});try{const contacts=await env.DB!.prepare('SELECT id,name,phone FROM whatsapp_contacts ORDER BY name COLLATE NOCASE').all();return Response.json({contacts:contacts.results})}catch{return Response.json({error:'Não foi possível carregar os contatos.'},{status:503})}}
-async function loggedPOST(req:Request){if(!await isAdmin(req))return Response.json({error:'Acesso restrito.'},{status:403});try{const body=await req.json() as {name?:string;phone?:string};const name=body.name?.trim(),number=phone(body.phone||'');if(!name||name.length>80||number.length<10||number.length>15)return Response.json({error:'Informe nome e WhatsApp com DDD.'},{status:400});const contact=await env.DB!.prepare('INSERT INTO whatsapp_contacts (name,phone) VALUES (?,?) RETURNING id,name,phone').bind(name,number).first();return Response.json({contact},{status:201})}catch{return Response.json({error:'Este número já está cadastrado.'},{status:409})}}
+import {env} from 'cloudflare:workers';
+import {getSession} from '../../../admin-auth';
+import {ensureTripCancellation} from '@/app/lib/trip-cancellation';
 
+type Context={params:Promise<{id:string}>};
+async function loggedPOST(req:Request,{params}:Context){
+ const user=await getSession(req);
+ if(!user||user.passwordChangeRequired||!(user.bootstrap||user.groupName==='adm'))return Response.json({error:'Somente ADM pode reabrir uma viagem.'},{status:403});
+ try{
+  await ensureTripCancellation();
+  const id=Number((await params).id);
+  if(!Number.isSafeInteger(id)||id<=0)return Response.json({error:'Viagem inválida.'},{status:400});
+  const exists=await env.DB!.prepare("SELECT id FROM trips WHERE id=? AND COALESCE(canceled_at,'')='' AND COALESCE(finalized_at,'')<>''").bind(id).first();
+  if(!exists)return Response.json({error:'A viagem não está finalizada ou está cancelada.'},{status:409});
+  await env.DB!.prepare("UPDATE trips SET finalized_at=NULL,finalized_by=NULL,finalized_by_name=NULL WHERE id=? AND COALESCE(canceled_at,'')='' AND COALESCE(finalized_at,'')<>''").bind(id).run();
+  return Response.json({reopened:true,logDetails:`Viagem ${id} reaberta pelo ADM ${user.name}.`});
+ }catch(error){console.error('Falha ao reabrir viagem:',error);return Response.json({error:'Não foi possível reabrir a viagem.'},{status:503})}
+}
 export const POST=withSystemLog(loggedPOST);

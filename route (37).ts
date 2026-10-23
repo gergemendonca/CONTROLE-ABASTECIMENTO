@@ -1,9 +1,17 @@
-import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
-import {ensureUserPasswordPolicy,hashPassword,isAdmin,roles} from '../admin-auth';
-const validRoles=(value:unknown)=>Array.isArray(value)&&value.length>0&&value.every(x=>typeof x==='string'&&roles.includes(x as typeof roles[number]));
-const groups=['motorista','adm','gerencia'] as const;const validGroup=(value:unknown):value is typeof groups[number]=>typeof value==='string'&&groups.includes(value as typeof groups[number]);
-export async function GET(req:Request){if(!await isAdmin(req))return Response.json({error:'Apenas administrador.'},{status:403});await ensureUserPasswordPolicy();const users=await env.DB!.prepare('SELECT id,name,username,group_name AS groupName,roles,active,created_at AS createdAt,password_change_required AS passwordChangeRequired FROM app_users ORDER BY name').all();return Response.json({users:users.results});}
-async function loggedPOST(req:Request){if(!await isAdmin(req))return Response.json({error:'Apenas administrador.'},{status:403});try{await ensureUserPasswordPolicy();const {name,username,userRoles,groupName}=await req.json() as {name?:string;username?:string;userRoles?:unknown;groupName?:unknown};const cleanUser=username?.trim().toLowerCase();if(!name?.trim()||!cleanUser||!validRoles(userRoles)||!validGroup(groupName))return Response.json({error:'Informe nome, grupo, usuário e ao menos uma função.'},{status:400});if(cleanUser==='admin')return Response.json({error:'O usuário admin é reservado para o acesso inicial.'},{status:400});const duplicate=await env.DB!.prepare('SELECT id FROM app_users WHERE username=? LIMIT 1').bind(cleanUser).first();if(duplicate)return Response.json({error:'Este nome de usuário já está em uso. Escolha outro.'},{status:409});const user=await env.DB!.prepare('INSERT INTO app_users (name,username,password_hash,group_name,roles,active,created_at,password_change_required) VALUES (?,?,?,?,?,1,?,1) RETURNING id,name,username,group_name AS groupName,roles,active,created_at AS createdAt,password_change_required AS passwordChangeRequired').bind(name.trim(),cleanUser,await hashPassword('1234'),groupName,JSON.stringify(userRoles),new Date().toISOString()).first();return Response.json({user});}catch{return Response.json({error:'Não foi possível cadastrar o usuário. Tente novamente.'},{status:503})}}
+import {getSession,isManagementUser} from '../../admin-auth';
+import {additionalFuelingRange} from '@/app/lib/fueling-range';
 
-export const POST=withSystemLog(loggedPOST);
+export async function GET(req:Request){
+ const user=await getSession(req);
+ if(!user||user.passwordChangeRequired)return Response.json({error:'Faça login para consultar a quilometragem.'},{status:401});
+ const vehicleId=Number(new URL(req.url).searchParams.get('vehicleId'));
+ if(!Number.isSafeInteger(vehicleId)||vehicleId<1)return Response.json({error:'Veículo inválido.'},{status:400});
+ try{
+  const tripId=Number(new URL(req.url).searchParams.get('tripId')||0);
+  if(tripId&&(!Number.isSafeInteger(tripId)||tripId<1))return Response.json({error:'Viagem inválida.'},{status:400});
+  if(tripId&&!isManagementUser(user)&&!await env.DB!.prepare('SELECT 1 FROM trip_users WHERE trip_id=? AND user_id=?').bind(tripId,user.id).first())return Response.json({error:'Esta viagem não está associada ao seu usuário.'},{status:403});
+  const record=await env.DB!.prepare('SELECT MAX(odometer) AS odometer FROM fueling WHERE vehicle_id=?').bind(vehicleId).first<{odometer:number|null}>();
+  return Response.json({odometer:record?.odometer??null,additionalRange:tripId?await additionalFuelingRange(tripId,vehicleId):null},{headers:{'Cache-Control':'no-store'}});
+ }catch{return Response.json({error:'Não foi possível consultar a última quilometragem.'},{status:503});}
+}

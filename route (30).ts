@@ -1,14 +1,90 @@
-import {additionalFuelingRange,fuelingRangeMessage,ensureEarlyFuelingNote,earlyFuelingReason} from '@/app/lib/fueling-range';
-import {withSystemLog} from '@/app/lib/system-log';
-import { env } from 'cloudflare:workers';
-import { validate } from '../common';
-import {getSession,type SessionUser} from '../../admin-auth';
-import {ensureFuelingFunding} from '@/app/lib/trip-fuel-options';
-type Params={params:Promise<{id:string}>};
-const canChooseDriver=(user:SessionUser)=>!!user.bootstrap||user.groupName==='adm'||user.groupName==='gerencia';
-async function canLaunchFor(user:SessionUser,driverId:number){if(canChooseDriver(user))return true;if(user.groupName!=='motorista'||!user.roles.includes('solicitante'))return false;return !!await env.DB!.prepare('SELECT id FROM drivers WHERE id=? AND lower(name)=lower(?) LIMIT 1').bind(driverId,user.name).first();}
-async function loggedPUT(req:Request,{params}:Params){const session=await getSession(req);if(!session||session.passwordChangeRequired)return Response.json({error:'Faça login e troque sua senha antes de editar.'},{status:401});try{const id=Number((await params).id),input:any=await req.json(),data=await validate(input,!!session&&canChooseDriver(session));if(!Number.isSafeInteger(id)||!data)return Response.json({error:'Confira os dados do abastecimento.'},{status:400});if(!await canLaunchFor(session,data.driverId))return Response.json({error:'Você só pode editar abastecimento em seu próprio nome.'},{status:403});const exists=await env.DB!.prepare('SELECT id FROM fueling WHERE id=?').bind(id).first();if(!exists)return Response.json({error:'Registro não encontrado.'},{status:404});const duplicate=await env.DB!.prepare('SELECT id FROM fueling WHERE vehicle_id=? AND odometer=? AND id<>? LIMIT 1').bind(data.vehicleId,data.odometer,id).first();if(duplicate)return Response.json({error:'Já existe outro abastecimento deste veículo com esta quilometragem. Confira o KM informado.'},{status:409});const last=await env.DB!.prepare('SELECT MAX(odometer) AS odometer FROM fueling WHERE vehicle_id=?').bind(data.vehicleId).first<{odometer:number|null}>();if(last?.odometer!==null&&last?.odometer!==undefined&&data.odometer<last.odometer)return Response.json({error:`A quilometragem informada é inferior à última registrada para este carro (${last.odometer.toLocaleString('pt-BR')} km). Revise o painel do veículo.`},{status:409});let earlyNote:string|null=null;if(data.liters>0){const range=await additionalFuelingRange(data.tripId,data.vehicleId,id);if(range&&data.odometer<range.minimumOdometer){const reason=earlyFuelingReason(input.earlyReason);if(!reason)return Response.json({error:fuelingRangeMessage(range,data.odometer),earlyWarning:true},{status:409});earlyNote=`ABASTECIMENTO ANTECIPADO — ${reason}. Editado por ${session.name} em ${new Date().toISOString()}. Anterior: ${range.previousLiters} L em ${range.previousOdometer} km; atual: ${data.odometer} km; referência: 2,3 km/L.`;}}const request=await env.DB!.prepare("SELECT fr.id FROM fuel_requests fr WHERE fr.trip_id=? AND fr.status='authorized' AND fr.created_at>=datetime('now','-5 days') AND NOT EXISTS (SELECT 1 FROM fueling used WHERE used.fuel_request_id=fr.id AND used.id<>?) ORDER BY fr.authorized_at DESC,fr.id DESC LIMIT 1").bind(data.tripId,id).first<{id:number}>();await ensureEarlyFuelingNote();await ensureFuelingFunding();await env.DB!.batch([env.DB!.prepare('UPDATE fueling SET vehicle_id=?,driver_id=?,driver=?,liters=?,odometer=?,amount_cents=?,trip_id=?,fuel_request_id=?,early_note=COALESCE(?,early_note),paid_by_third_party=COALESCE(?,paid_by_third_party) WHERE id=?').bind(data.vehicleId,data.driverId,data.driverName,data.liters,data.odometer,data.total,data.tripId,request?.id||null,earlyNote,data.clientPaid,id),env.DB!.prepare('DELETE FROM fueling_items WHERE fueling_id=?').bind(id),...data.items.map(i=>env.DB!.prepare('INSERT INTO fueling_items (fueling_id,kind,quantity,amount_cents) VALUES (?,?,?,?)').bind(id,i.kind,i.quantity,i.amountCents))]);return Response.json({id,earlyNote,logDetails:earlyNote})}catch{return Response.json({error:'Falha ao editar. Tente novamente.'},{status:503})}}
-async function loggedDELETE(req:Request,{params}:Params){const session=await getSession(req);if(!session||session.passwordChangeRequired)return Response.json({error:'Faça login e troque sua senha antes de apagar.'},{status:401});try{const id=Number((await params).id);if(!Number.isSafeInteger(id))return Response.json({error:'Registro inválido.'},{status:400});const record=await env.DB!.prepare('SELECT driver_id AS driverId FROM fueling WHERE id=?').bind(id).first<{driverId:number}>();if(!record)return Response.json({error:'Registro não encontrado.'},{status:404});if(!await canLaunchFor(session,record.driverId))return Response.json({error:'Você só pode apagar abastecimento em seu próprio nome.'},{status:403});await env.DB!.batch([env.DB!.prepare('DELETE FROM fueling_items WHERE fueling_id=?').bind(id),env.DB!.prepare('DELETE FROM fueling WHERE id=?').bind(id)]);return Response.json({deleted:true})}catch{return Response.json({error:'Falha ao apagar. Tente novamente.'},{status:503})}}
+import {env} from 'cloudflare:workers';
+import {isAdmin} from '../../admin-auth';
+import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
+import {ensureVehicleFuelAssignment} from '@/app/lib/vehicle-fueling-assignment';
+import {tripFueledSql} from '@/app/lib/vehicle-fuel-status';
+import {activeTrip,ensureTripCancellation} from '@/app/lib/trip-cancellation';
 
-export const PUT=withSystemLog(loggedPUT);
-export const DELETE=withSystemLog(loggedDELETE);
+import {ensureFuelingFunding,ensureTripFuelOptions} from '@/app/lib/trip-fuel-options';
+export const dynamic='force-dynamic';
+
+function isoDate(value:string|null,fallback:string){
+ const parsed=value&&/^\d{4}-\d{2}-\d{2}$/.test(value)?value:fallback;
+ return parsed;
+}
+
+async function ensureClientPaidColumn(){
+ const columns=await env.DB!.prepare('PRAGMA table_info(fuel_requests)').all<{name:string}>();
+ if(!columns.results.some(column=>column.name==='client_paid'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN client_paid integer DEFAULT 0 NOT NULL').run();
+}
+
+export async function GET(req:Request){
+ if(!await isAdmin(req))return Response.json({error:'Apenas o administrador pode gerar relatórios.'},{status:403});
+ try{
+  await ensureClientPaidColumn();await ensureTripFuelOptions();await ensureFuelingFunding();await ensureTripControl();await ensureTripCancellation();await ensureVehicleFuelAssignment();
+  const url=new URL(req.url);
+  const today=new Date().toISOString().slice(0,10);
+  const firstOfMonth=`${today.slice(0,7)}-01`;
+  const from=isoDate(url.searchParams.get('from'),firstOfMonth);
+  const to=isoDate(url.searchParams.get('to'),today);
+  const canceled=url.searchParams.get('kind')==='canceladas';
+  const payments=url.searchParams.get('kind')==='pagamentos';
+  if(from>to)return Response.json({error:'A data inicial não pode ser posterior à data final.'},{status:400});
+  if(canceled){
+   const rows=await env.DB!.prepare(`SELECT t.id,${controlSql('t')},v.label AS vehicleLabel,t.route,COALESCE(t.departure_date,t.travel_date) AS departureDate,COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,COALESCE(t.total_km,0) AS totalKm,COALESCE(t.total_value_cents,0) AS totalValueCents,COALESCE(t.cancel_reason,'Motivo não informado') AS cancelReason,COALESCE(t.canceled_by_name,'Não informado') AS canceledBy,COALESCE(t.canceled_at,'') AS canceledAt FROM trips t JOIN vehicles v ON v.id=t.vehicle_id WHERE COALESCE(t.canceled_at,'')<>'' AND date(t.canceled_at,'-3 hours') BETWEEN ? AND ? ORDER BY t.canceled_at DESC,t.id DESC`).bind(from,to).all();
+   return Response.json({from,to,generatedAt:new Date().toISOString(),records:[],trips:[],canceledTrips:rows.results||[]});
+  }
+  if(payments){
+   const trips=await env.DB!.prepare(`
+    SELECT t.id,${controlSql('t')},v.label AS vehicleLabel,t.route,
+     COALESCE(t.departure_date,t.travel_date) AS departureDate,
+     COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,
+     COALESCE(t.total_km,0) AS totalKm,COALESCE(t.total_value_cents,0) AS totalValueCents,
+     COALESCE((SELECT fr.payment_status FROM fuel_requests fr WHERE fr.trip_id=t.id AND fr.status IN ('pending','authorized') ORDER BY fr.id DESC LIMIT 1),t.payment_status,'nao_pago') AS paymentStatus,
+     COALESCE((SELECT fr.outstanding_cents FROM fuel_requests fr WHERE fr.trip_id=t.id AND fr.status IN ('pending','authorized') ORDER BY fr.id DESC LIMIT 1),t.outstanding_cents,t.total_value_cents,0) AS outstandingCents,
+     CASE WHEN COALESCE(t.no_fueling,0)=1 THEN 'not_required' WHEN COALESCE(t.fuel_canceled_at,'')<>'' THEN 'fuel_canceled' WHEN ${tripFueledSql('t')} THEN 'fueled' WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id AND fr.status IN ('pending','authorized') ORDER BY fr.id DESC LIMIT 1)='pending' THEN 'pending' WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id AND fr.status IN ('pending','authorized') ORDER BY fr.id DESC LIMIT 1)='authorized' THEN 'authorized' ELSE 'missing' END AS status
+    FROM trips t JOIN vehicles v ON v.id=t.vehicle_id
+    WHERE ${activeTrip('t')} AND COALESCE(t.departure_date,t.travel_date) BETWEEN ? AND ?
+    ORDER BY COALESCE(t.departure_date,t.travel_date) DESC,t.id DESC
+   `).bind(from,to).all();
+   return Response.json({from,to,generatedAt:new Date().toISOString(),records:[],trips:trips.results||[]});
+  }
+  const rows=await env.DB!.prepare(`
+   SELECT
+    f.id,f.vehicle_id AS vehicleId,v.label AS vehicleLabel,f.driver,f.driver_id AS driverId,
+    f.trip_id AS tripId,f.created_at AS createdAt,f.liters,f.amount_cents AS amountCents,
+    COALESCE(t.route,'AGUARDANDO REALOCAÇÃO PARA VIAGEM') AS route,${controlSql('t')},
+    COALESCE(t.total_km,0) AS totalKm,COALESCE(t.total_value_cents,0) AS totalValueCents,
+    COALESCE(fr.payment_status,'') AS paymentStatus,COALESCE(fr.outstanding_cents,0) AS outstandingCents,COALESCE(f.paid_by_third_party,fr.client_paid,0) AS clientPaid
+   FROM fueling f
+   JOIN vehicles v ON v.id=f.vehicle_id
+   LEFT JOIN trips t ON t.id=f.trip_id
+   LEFT JOIN fuel_requests fr ON fr.id=COALESCE(f.fuel_request_id,(SELECT id FROM fuel_requests q WHERE q.trip_id=f.trip_id ORDER BY q.id DESC LIMIT 1))
+   WHERE date(f.created_at,'-3 hours') BETWEEN ? AND ? AND (t.id IS NULL OR (${activeTrip('t')} AND COALESCE(t.fuel_canceled_at,'')=''))
+   ORDER BY f.created_at DESC,f.id DESC
+  `).bind(from,to).all();
+  // O relatório é financeiro/operacional: uma viagem só participa dele depois
+  // que existir abastecimento efetivamente lançado no período escolhido.
+  const trips=await env.DB!.prepare(`
+   SELECT t.id,${controlSql('t')},v.label AS vehicleLabel,t.route,
+    COALESCE(t.departure_date,t.travel_date) AS departureDate,
+    COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,
+    COALESCE(t.total_km,0) AS totalKm,COALESCE(t.total_value_cents,0) AS totalValueCents,
+    CASE WHEN COALESCE(t.no_fueling,0)=1 THEN 'not_required' WHEN COALESCE(t.fuel_canceled_at,'')<>'' THEN 'fuel_canceled' WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id AND fr.status IN ('pending','authorized') ORDER BY fr.id DESC LIMIT 1)='pending' THEN 'pending'
+         WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id AND fr.status IN ('pending','authorized') ORDER BY fr.id DESC LIMIT 1)='authorized' THEN CASE WHEN ${tripFueledSql('t')} THEN 'fueled' ELSE 'authorized' END
+         WHEN ${tripFueledSql('t')} THEN 'fueled'
+         ELSE 'missing' END AS status
+   FROM trips t JOIN vehicles v ON v.id=t.vehicle_id
+   WHERE ${activeTrip('t')} AND (EXISTS (
+    SELECT 1 FROM fueling completed
+    WHERE completed.vehicle_id=t.vehicle_id AND (completed.trip_id=t.id OR (completed.trip_id IS NULL AND completed.original_trip_id IS NULL AND EXISTS (
+      SELECT 1 FROM fuel_requests linked
+      WHERE linked.id=completed.fuel_request_id AND linked.trip_id=t.id
+    )))
+    AND date(completed.created_at,'-3 hours') BETWEEN ? AND ?
+   ) OR ((COALESCE(t.fuel_canceled_at,'')<>'' OR COALESCE(t.no_fueling,0)=1) AND COALESCE(t.departure_date,t.travel_date) BETWEEN ? AND ?))
+   ORDER BY COALESCE(t.departure_date,t.travel_date) DESC,t.id DESC
+  `).bind(from,to,from,to).all();
+  return Response.json({from,to,generatedAt:new Date().toISOString(),records:rows.results||[],trips:trips.results||[]});
+ }catch{return Response.json({error:'Não foi possível gerar o relatório.'},{status:503});}
+}

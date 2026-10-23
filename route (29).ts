@@ -1,17 +1,28 @@
 import {env} from 'cloudflare:workers';
-import {getSession,isManagementUser} from '../../admin-auth';
-import {additionalFuelingRange} from '@/app/lib/fueling-range';
-
+import {isAdmin} from '../../admin-auth';
+import {ensureVehicleConsumption} from '@/app/lib/vehicle-consumption';
+import {projectedTankEstimate} from '@/app/lib/tank-estimate';
+import {ensureTripCancellation,activeTrip} from '@/app/lib/trip-cancellation';
+import {ensureTripControl,controlSql} from '@/app/lib/trip-control';
+export const dynamic='force-dynamic';
 export async function GET(req:Request){
- const user=await getSession(req);
- if(!user||user.passwordChangeRequired)return Response.json({error:'Faça login para consultar a quilometragem.'},{status:401});
- const vehicleId=Number(new URL(req.url).searchParams.get('vehicleId'));
- if(!Number.isSafeInteger(vehicleId)||vehicleId<1)return Response.json({error:'Veículo inválido.'},{status:400});
+ if(!await isAdmin(req))return Response.json({error:'Acesso restrito à Adm e Gerência.'},{status:403});
  try{
-  const tripId=Number(new URL(req.url).searchParams.get('tripId')||0);
-  if(tripId&&(!Number.isSafeInteger(tripId)||tripId<1))return Response.json({error:'Viagem inválida.'},{status:400});
-  if(tripId&&!isManagementUser(user)&&!await env.DB!.prepare('SELECT 1 FROM trip_users WHERE trip_id=? AND user_id=?').bind(tripId,user.id).first())return Response.json({error:'Esta viagem não está associada ao seu usuário.'},{status:403});
-  const record=await env.DB!.prepare('SELECT MAX(odometer) AS odometer FROM fueling WHERE vehicle_id=?').bind(vehicleId).first<{odometer:number|null}>();
-  return Response.json({odometer:record?.odometer??null,additionalRange:tripId?await additionalFuelingRange(tripId,vehicleId):null},{headers:{'Cache-Control':'no-store'}});
- }catch{return Response.json({error:'Não foi possível consultar a última quilometragem.'},{status:503});}
+ await ensureVehicleConsumption();await ensureTripCancellation();await ensureTripControl();
+ const url=new URL(req.url),raw=url.searchParams.get('before'),before=raw?Number(raw):null;
+ if(before!==null&&(!Number.isSafeInteger(before)||before<=0))return Response.json({error:'Página inválida.'},{status:400});
+ const rows=await env.DB!.prepare(`SELECT t.id,${controlSql('t')},t.route,v.label AS vehicleLabel,
+ COALESCE(t.departure_date,t.travel_date) AS departureDate,COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,
+ COALESCE(t.no_fueling,0) AS noFueling,t.total_km AS plannedKm,v.consumption_km_l AS consumptionKmL,
+ COALESCE(f.fueledLiters,0) AS fueledLiters,COALESCE(f.fuelingCount,0) AS fuelingCount,
+ f.firstOdometer,f.lastOdometer
+ FROM trips t JOIN vehicles v ON v.id=t.vehicle_id
+ LEFT JOIN (SELECT trip_id,vehicle_id,SUM(liters) AS fueledLiters,COUNT(*) AS fuelingCount,
+ MIN(odometer) AS firstOdometer,MAX(odometer) AS lastOdometer FROM fueling WHERE liters>0 GROUP BY trip_id,vehicle_id) f
+ ON f.trip_id=t.id AND f.vehicle_id=t.vehicle_id
+ WHERE ${activeTrip('t')} AND COALESCE(t.fuel_canceled_at,'')=''${before?' AND t.id<?':''}
+ ORDER BY t.id DESC LIMIT 101`).bind(...(before?[before]:[])).all<any>();
+ const list=rows.results.slice(0,100).map(row=>({...row,estimate:projectedTankEstimate(row.plannedKm,row.consumptionKmL,Number(row.fueledLiters),Number(row.fuelingCount))}));
+ return Response.json({trips:list,nextBefore:rows.results.length>100?list[list.length-1].id:null},{headers:{'Cache-Control':'no-store'}});
+ }catch{return Response.json({error:'Não foi possível carregar a tabela de autonomia.'},{status:503})}
 }

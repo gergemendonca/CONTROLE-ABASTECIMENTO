@@ -1,35 +1,9 @@
 import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
-import {isManagementUser,requireRole} from '../../../admin-auth';
-import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
-import {ensureTripAudit,recordTripAudit} from '@/app/lib/trip-audit';
-import {activeTrip,ensureTripCancellation} from '@/app/lib/trip-cancellation';
-import {ensureVehicleFuelStatus,setVehicleFuelState} from '@/app/lib/vehicle-fuel-status';
-
-const today=()=>{const parts=new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Bahia',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());const part=(name:string)=>parts.find(x=>x.type===name)?.value||'';return `${part('year')}-${part('month')}-${part('day')}`};
-async function ensureAuditName(){const columns=await env.DB!.prepare('PRAGMA table_info(fuel_requests)').all<{name:string}>();if(!columns.results.some(column=>column.name==='authorized_by_name'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN authorized_by_name text').run();if(!columns.results.some(column=>column.name==='authorized_registered_at'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN authorized_registered_at text').run();}
-
-async function loggedPOST(req:Request,{params}:{params:Promise<{id:string}>}){
-  const access=await requireRole(req,'autorizador');
-  if(!access.user)return Response.json({error:access.error},{status:403});
-  try{
-  await ensureAuditName();await ensureTripControl();await ensureTripAudit();await ensureTripCancellation();await ensureVehicleFuelStatus();
-    const id=Number((await params).id),management=isManagementUser(access.user);
-    if(!Number.isSafeInteger(id))return Response.json({error:'Pedido inválido.'},{status:400});
-    const item=await env.DB!.prepare(`SELECT f.trip_id AS tripId,f.vehicle_id AS vehicleId,${controlSql('t')},t.route,v.label AS vehicleLabel,COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,COALESCE(f.retroactive,0) AS retroactive FROM fuel_requests f JOIN trips t ON t.id=f.trip_id JOIN vehicles v ON v.id=f.vehicle_id WHERE f.id=? AND f.status='pending' AND ${activeTrip('t')} AND COALESCE(t.no_fueling,0)=0 AND COALESCE(t.fuel_canceled_at,'')='' AND (COALESCE(t.arrival_date,t.travel_date)>=? OR COALESCE(f.retroactive,0)=1)`).bind(id,today()).first<{tripId:number;vehicleId:number;controlNumber:string;route:string;vehicleLabel:string;arrivalDate:string;retroactive:number}>();
-    if(!item)return Response.json({error:'Este pedido já venceu, foi tratado ou não existe.'},{status:409});
-    const now=new Date().toISOString(),when=new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short',timeZone:'America/Bahia'}).format(new Date(now)),retroactive=Number(item.retroactive)===1;
-    if(retroactive&&!management)return Response.json({error:'Somente Adm ou Gerência pode autorizar uma viagem fora do prazo.'},{status:403});
-    await env.DB!.prepare("UPDATE fuel_requests SET status='authorized',authorized_by=?,authorized_by_name=?,authorized_at=?,authorized_registered_at=? WHERE id=? AND status='pending'").bind(access.user.bootstrap?null:access.user.id,access.user.name,now,now,id).run();
-    await setVehicleFuelState(item.vehicleId,'authorized',{requestId:id,note:`Pedido ${id} autorizado`});
-    if(retroactive)await recordTripAudit({tripId:item.tripId,action:'autorizacao_registrada',actorName:access.user.name,effectiveAt:now,registeredAt:now,retroactive:true});
-    const viewers=await env.DB!.prepare('SELECT user_id AS id FROM trip_users WHERE trip_id=?').bind(item.tripId).all<{id:number}>();
-    const managers=await env.DB!.prepare("SELECT id FROM app_users WHERE active=1 AND group_name='gerencia'").all<{id:number}>();
-    const ids=[...new Set([...viewers.results.map(x=>x.id),...managers.results.map(x=>x.id)])];
-    const message=`${item.controlNumber} — ${item.vehicleLabel} — ${item.route}. Autorizado por ${access.user.name} em ${when}.`;
-    if(ids.length)await env.DB!.batch(ids.map(userId=>env.DB!.prepare('INSERT INTO app_notifications (user_id,title,message,href,created_at) VALUES (?,?,?,?,?)').bind(userId,'Abastecimento autorizado',message,`/autorizacoes?pedido=${id}`,now)));
-    return Response.json({authorized:true,authorizedBy:access.user.name,authorizedAt:now});
-  }catch{return Response.json({error:'Não foi possível autorizar o pedido.'},{status:503})}
-}
+import {ensureUserPasswordPolicy,hashPassword,isAdmin,roles} from '../admin-auth';
+const validRoles=(value:unknown)=>Array.isArray(value)&&value.length>0&&value.every(x=>typeof x==='string'&&roles.includes(x as typeof roles[number]));
+const groups=['motorista','adm','gerencia'] as const;const validGroup=(value:unknown):value is typeof groups[number]=>typeof value==='string'&&groups.includes(value as typeof groups[number]);
+export async function GET(req:Request){if(!await isAdmin(req))return Response.json({error:'Apenas administrador.'},{status:403});await ensureUserPasswordPolicy();const users=await env.DB!.prepare('SELECT id,name,username,group_name AS groupName,roles,active,created_at AS createdAt,password_change_required AS passwordChangeRequired FROM app_users ORDER BY name').all();return Response.json({users:users.results});}
+async function loggedPOST(req:Request){if(!await isAdmin(req))return Response.json({error:'Apenas administrador.'},{status:403});try{await ensureUserPasswordPolicy();const {name,username,userRoles,groupName}=await req.json() as {name?:string;username?:string;userRoles?:unknown;groupName?:unknown};const cleanUser=username?.trim().toLowerCase();if(!name?.trim()||!cleanUser||!validRoles(userRoles)||!validGroup(groupName))return Response.json({error:'Informe nome, grupo, usuário e ao menos uma função.'},{status:400});if(cleanUser==='admin')return Response.json({error:'O usuário admin é reservado para o acesso inicial.'},{status:400});const duplicate=await env.DB!.prepare('SELECT id FROM app_users WHERE username=? LIMIT 1').bind(cleanUser).first();if(duplicate)return Response.json({error:'Este nome de usuário já está em uso. Escolha outro.'},{status:409});const user=await env.DB!.prepare('INSERT INTO app_users (name,username,password_hash,group_name,roles,active,created_at,password_change_required) VALUES (?,?,?,?,?,1,?,1) RETURNING id,name,username,group_name AS groupName,roles,active,created_at AS createdAt,password_change_required AS passwordChangeRequired').bind(name.trim(),cleanUser,await hashPassword('1234'),groupName,JSON.stringify(userRoles),new Date().toISOString()).first();return Response.json({user});}catch{return Response.json({error:'Não foi possível cadastrar o usuário. Tente novamente.'},{status:503})}}
 
 export const POST=withSystemLog(loggedPOST);

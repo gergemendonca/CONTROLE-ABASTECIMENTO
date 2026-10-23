@@ -1,23 +1,29 @@
 import {env} from 'cloudflare:workers';
-import {isManagementUser,getSession} from '../admin-auth';
-import {activeTrip,ensureTripCancellation} from '@/app/lib/trip-cancellation';
-import {ensureVehicleFuelAssignment} from '@/app/lib/vehicle-fueling-assignment';
+import {getSession,isManagementUser} from '../../admin-auth';
+import {ensureSystemLog,recordSystemLog} from '@/app/lib/system-log';
 
 export async function GET(req:Request){
- const session=await getSession(req);
- if(!session||!isManagementUser(session)||session.passwordChangeRequired)return Response.json({error:'Acesso restrito.'},{status:403});
- const params=new URL(req.url).searchParams,vehicleId=Number(params.get('vehicleId')),excludeTripId=Number(params.get('excludeTripId')||0),referenceDate=params.get('referenceDate')||'9999-12-31';
- if(!Number.isSafeInteger(vehicleId)||vehicleId<=0)return Response.json({error:'Veículo inválido.'},{status:400});
+ const user=await getSession(req);
+ if(!user||user.passwordChangeRequired||!isManagementUser(user))return Response.json({error:'Acesso restrito ao Adm e Gerência.'},{status:403});
  try{
-  await ensureTripCancellation();await ensureVehicleFuelAssignment();
-  const previous=await env.DB!.prepare(`SELECT t.id,v.label AS vehicleLabel,t.route,
-   COALESCE(t.departure_date,t.travel_date) AS departureDate,COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,
-   EXISTS(SELECT 1 FROM fueling f WHERE f.vehicle_id=t.vehicle_id AND (f.trip_id=t.id OR f.original_trip_id=t.id OR (f.trip_id IS NULL AND f.original_trip_id IS NULL AND f.fuel_request_id IN (SELECT id FROM fuel_requests WHERE trip_id=t.id)))) AS hasFueling
-   FROM trips t JOIN vehicles v ON v.id=t.vehicle_id
-   WHERE t.vehicle_id=? AND t.id<>? AND ${activeTrip('t')}
-   ORDER BY CASE WHEN COALESCE(t.departure_date,t.travel_date)<=? THEN 0 ELSE 1 END,
-   CASE WHEN COALESCE(t.departure_date,t.travel_date)<=? THEN COALESCE(t.departure_date,t.travel_date) END DESC,
-   CASE WHEN COALESCE(t.departure_date,t.travel_date)>? THEN COALESCE(t.departure_date,t.travel_date) END ASC,t.id DESC LIMIT 1`).bind(vehicleId,excludeTripId,referenceDate,referenceDate,referenceDate).first();
-  return Response.json({previousTrip:previous||null});
- }catch{return Response.json({error:'Não foi possível verificar o histórico do veículo.'},{status:503});}
+  await ensureSystemLog();
+  const url=new URL(req.url),before=Number(url.searchParams.get('before')||0),search=(url.searchParams.get('search')||'').trim().slice(0,100);
+  const clauses:string[]=[],values:(string|number)[]=[];
+  if(before>0&&Number.isSafeInteger(before)){clauses.push('id<?');values.push(before);}
+  if(search){clauses.push('(instr(lower(actor_name),lower(?))>0 OR instr(lower(username),lower(?))>0 OR instr(lower(action),lower(?))>0 OR entity_id=?)');values.push(search,search,search,search);}
+  const result=await env.DB!.prepare(`SELECT id,actor_name AS actorName,username,action,path,method,status,entity_id AS entityId,created_at AS createdAt,details FROM system_log ${clauses.length?'WHERE '+clauses.join(' AND '):''} ORDER BY id DESC LIMIT 101`).bind(...values).all();
+  const records=result.results.slice(0,100);
+  return Response.json({records,nextBefore:result.results.length>100?records[records.length-1].id:null},{headers:{'Cache-Control':'no-store'}});
+ }catch{return Response.json({error:'Não foi possível consultar o log.'},{status:503});}
+}
+export async function POST(req:Request){
+ const user=await getSession(req);
+ if(!user||user.passwordChangeRequired)return Response.json({error:'Faça login.'},{status:401});
+ try{
+  const body=await req.json(),path=String(body.path||'').split('?')[0].slice(0,200);
+  if(!path.startsWith('/')||path.startsWith('//')||path.startsWith('/api/'))return Response.json({error:'Página inválida.'},{status:400});
+  const allowed=!path.startsWith('/admin')||isManagementUser(user);
+  await recordSystemLog({user,path,action:allowed?'Acessar página':'Acesso ao Adm negado',method:'GET',status:allowed?200:403});
+  return Response.json({ok:allowed},{status:allowed?200:403});
+ }catch{return Response.json({error:'Não foi possível registrar o acesso.'},{status:503});}
 }

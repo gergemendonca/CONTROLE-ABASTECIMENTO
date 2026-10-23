@@ -1,19 +1,31 @@
-import {ensureEarlyFuelingNote} from '@/app/lib/fueling-range';
+import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
-import {isAdmin} from '../../admin-auth';
-import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
 
-import {ensureFuelingFunding} from '@/app/lib/trip-fuel-options';
-import {ensureVehicleFuelAssignment} from '@/app/lib/vehicle-fueling-assignment';
-import {ensurePublicIds,fuelingCodeSql,vehicleCodeSql} from '@/app/lib/public-ids';
 export const dynamic='force-dynamic';
-async function ensureRetroactiveFlag(){const columns=await env.DB!.prepare('PRAGMA table_info(fueling)').all<{name:string}>();if(!columns.results.some(column=>column.name==='retroactive'))await env.DB!.prepare('ALTER TABLE fueling ADD COLUMN retroactive integer DEFAULT 0 NOT NULL').run();}
 
-export async function GET(req:Request){
- if(!await isAdmin(req))return Response.json({error:'Apenas o administrador pode consultar os abastecimentos feitos.'},{status:403});
- try{
-  await ensureTripControl();await ensurePublicIds();await ensureRetroactiveFlag();await ensureEarlyFuelingNote();await ensureFuelingFunding();await ensureVehicleFuelAssignment();
-  const rows=await env.DB!.prepare(`SELECT f.id,${fuelingCodeSql('f')} AS fuelingCode,COALESCE(f.paid_by_third_party,fr.client_paid,0) AS clientPaid,f.early_note AS earlyNote,${vehicleCodeSql('v')} AS vehicleCode,v.label AS vehicleLabel,COALESCE(t.route,'AGUARDANDO REALOCAÇÃO PARA VIAGEM') AS route,${controlSql('t')},f.driver,f.created_at AS createdAt,f.amount_cents AS amountCents,f.liters,f.odometer AS odometer,COALESCE(t.total_km,0) AS totalKm,COALESCE(f.retroactive,0) AS retroactive,COALESCE(fr.requested_by_name,requester.name,f.launched_by_name,'Não informado') AS requestedBy,COALESCE(f.launched_by_name,'Não informado') AS launchedBy,COALESCE(fr.authorized_by_name,a.name,'Não informado') AS authorizedBy,fr.authorized_at AS authorizedAt,COALESCE((SELECT GROUP_CONCAT('V-' || printf('%03d',used_trip.id),' · ') FROM fueling_usage usage JOIN trips used_trip ON used_trip.id=usage.used_by_trip_id WHERE usage.fueling_id=f.id),'') AS usedByTrips FROM fueling f JOIN vehicles v ON v.id=f.vehicle_id LEFT JOIN trips t ON t.id=f.trip_id LEFT JOIN fuel_requests fr ON fr.id=f.fuel_request_id LEFT JOIN app_users requester ON requester.id=fr.requested_by LEFT JOIN app_users a ON a.id=fr.authorized_by ORDER BY f.created_at DESC,f.id DESC`).all();
-  return Response.json({fueling:rows.results||[]});
- }catch{return Response.json({error:'Não foi possível carregar os abastecimentos feitos.'},{status:503})}
+async function syncRegisteredDrivers(){
+ await env.DB!.prepare("INSERT OR IGNORE INTO drivers (name) SELECT name FROM app_users WHERE active=1 AND group_name='motorista' AND NOT EXISTS (SELECT 1 FROM drivers d WHERE lower(d.name)=lower(app_users.name))").run();
 }
+
+export async function GET(){
+ try{
+  await syncRegisteredDrivers();
+  const r=await env.DB!.prepare("SELECT d.id,d.name,CASE WHEN EXISTS (SELECT 1 FROM app_users u WHERE u.active=1 AND u.group_name='motorista' AND lower(u.name)=lower(d.name)) THEN 'usuario' ELSE 'freelancer' END AS source FROM drivers d WHERE EXISTS (SELECT 1 FROM app_users u WHERE u.active=1 AND u.group_name='motorista' AND lower(u.name)=lower(d.name)) OR NOT EXISTS (SELECT 1 FROM app_users u WHERE lower(u.name)=lower(d.name)) ORDER BY CASE WHEN EXISTS (SELECT 1 FROM app_users u WHERE u.active=1 AND u.group_name='motorista' AND lower(u.name)=lower(d.name)) THEN 0 ELSE 1 END,d.name COLLATE NOCASE").all();
+  return Response.json({drivers:r.results});
+ }catch{return Response.json({error:'Não foi possível carregar os motoristas cadastrados.'},{status:503})}
+}
+
+async function loggedPOST(req:Request){
+ try{
+  const {name,freelancer}=await req.json() as {name?:string;freelancer?:boolean};
+  const clean=name?.trim();
+  if(!freelancer)return Response.json({error:'Motoristas permanentes devem ser cadastrados em Configurações, no grupo Motorista.'},{status:400});
+  if(!clean||clean.length>100)return Response.json({error:'Informe o nome do motorista freelancer.'},{status:400});
+  const existing=await env.DB!.prepare('SELECT id,name FROM drivers WHERE lower(name)=lower(?) LIMIT 1').bind(clean).first<{id:number;name:string}>();
+  if(existing)return Response.json({driver:{id:existing.id,name:existing.name,source:'freelancer'}});
+  const driver=await env.DB!.prepare('INSERT INTO drivers (name) VALUES (?) RETURNING id,name').bind(clean).first();
+  return Response.json({driver:{...driver,source:'freelancer'}},{status:201});
+ }catch{return Response.json({error:'Não foi possível cadastrar o freelancer. Verifique se o nome já existe.'},{status:409})}
+}
+
+export const POST=withSystemLog(loggedPOST);

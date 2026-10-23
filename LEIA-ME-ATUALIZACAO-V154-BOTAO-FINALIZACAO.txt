@@ -1,0 +1,26 @@
+CONTROLE DE ABASTECIMENTO — ATUALIZAÇÃO V154
+
+BASE: v153 — correção do vínculo entre pedidos extraordinários e abastecimentos.
+
+CORREÇÃO VISUAL E DE PERMISSÃO:
+- Na tela Área ADM > Lista de viagens, o botão "Finalizar viagens abertas" permanece visível.
+- O botão é habilitado somente para usuário ADM (grupo 'adm' ou login principal bootstrap).
+- A tela informa quando está conferindo a sessão, quando houve falha ou quando o usuário é Gerência e não pode finalizar.
+- Selo discreto 'v154' permite verificar visualmente que esta atualização foi de fato implantada.
+- API de finalização já validava a permissão ADM e permanece inalterada.
+- Não modifica solicitações, autorizações, abastecimentos, viagens, pagamentos ou banco de dados.
+
+LOCALIZAÇÃO:
+Área ADM > Lista de viagens > Logo abaixo do cabeçalho 'Lista de viagens'.
+Rota: /admin/lista-viagens
+
+VALIDAÇÃO APÓS A PUBLICAÇÃO:
+1. Com login ADM, entre em /admin/lista-viagens e localize o botão e o selo v154.
+2. Clique em 'Finalizar viagens abertas'. As caixas de seleção devem ser exibidas.
+3. Faça um teste com viagem de teste. Ao confirmar, deve sair das telas operacionais.
+4. Reabra a mesma viagem em 'Editar viagens'.
+5. Com usuário Gerência, o botão deve ser visível porém desabilitado e acompanhado de aviso.
+6. Se não houver selo v154, a publicação ainda está servindo uma versão anterior (ou cache do navegador).
+
+ATENÇÃO: ESTE ZIP NÃO PUBLICA AUTOMATICAMENTE. Implantar pelo mesmo procedimento das versões anteriores,
+preservando o banco D1 e os segredos do projeto. Faça backup antes de aplicar.

@@ -17,6 +17,8 @@ type Trip = {
   userIds: number[];
   noFueling?:number;
   isCompleted?:number;
+  finalizedAt?:string|null;
+  finalizedBy?:string|null;
   plannedLiters?:number|null;
   requestStatus?: "missing" | "pending" | "authorized" | "fueled" | "not_required";
   fuelCanceledAt?: string;
@@ -24,7 +26,7 @@ type Trip = {
   fuelCancelReason?: string;
   hasLateActivity?: number;
   lateActivities?: {action:string;actorName:string;effectiveAt:string;registeredAt:string}[];
-  paymentStatus?: "total" | "parcial" | "nao_pago";
+  paymentStatus?: "total" | "parcial" | "nao_pago" | "cortesia";
   outstandingCents?: number;
   externalDriverNames?: string[];
 };
@@ -57,6 +59,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
   const today = new Date().toISOString().slice(0, 10),
     formSectionRef = useRef<HTMLElement>(null),
     queryEditLoaded=useRef(false);
+  const [isAdm,setIsAdm]=useState(false);
   const [cars, setCars] = useState<any[]>([]),
     [trips, setTrips] = useState<Trip[]>([]),
     [users, setUsers] = useState<AppUser[]>([]);
@@ -69,7 +72,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     [totalKm, setTotalKm] = useState(""),
     [totalValue, setTotalValue] = useState(""),
     [noFueling,setNoFueling]=useState(false),[plannedLiters,setPlannedLiters]=useState(""),[originalLiters,setOriginalLiters]=useState<number|null>(null),
-    [paymentStatus,setPaymentStatus]=useState<"total"|"parcial"|"nao_pago">("nao_pago"),
+    [paymentStatus,setPaymentStatus]=useState<"total"|"parcial"|"nao_pago"|"cortesia">("nao_pago"),
     [outstandingValue,setOutstandingValue]=useState(""),
     [datesConfirmed, setDatesConfirmed] = useState(false),
     [selectedDriverIds, setSelectedDriverIds] = useState<number[]>([]),
@@ -92,7 +95,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
   async function load() {
     const [carsResponse, tripsResponse, usersResponse] = await Promise.all([
       fetch("/api/vehicles", { cache: "no-store" }),
-      fetch("/api/trips", { cache: "no-store" }),
+      fetch("/api/trips?includeFinalized=1", { cache: "no-store" }),
       fetch("/api/users", { cache: "no-store" }),
     ]);
     const carsData: any = await carsResponse.json(),
@@ -103,6 +106,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     setTrips(tripsData.trips || []);
     if (usersResponse.ok) setUsers(usersData.users || []);
   }
+  useEffect(()=>{void fetch('/api/admin-session',{cache:'no-store'}).then(r=>r.json()).then(data=>setIsAdm(data.user?.groupName==='adm')).catch(()=>setIsAdm(false))},[]);
   useEffect(() => {
     void (async () => {
       const setup = await fetch("/api/system/setup", { method: "POST" }),
@@ -289,13 +293,13 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
   }
   async function persist(allowConflicts: boolean) {
     const wasEditing = editing !== null,
-      totalValueCents=Math.round(decimal(totalValue) * 100),
+      totalValueCents=paymentStatus==="cortesia"?0:Math.round(decimal(totalValue) * 100),
       enteredOutstandingCents=Math.round(decimal(outstandingValue) * 100),
-      outstandingCents=paymentStatus==="total"?0:paymentStatus==="nao_pago"?totalValueCents:enteredOutstandingCents;
+      outstandingCents=paymentStatus==="total"||paymentStatus==="cortesia"?0:paymentStatus==="nao_pago"?totalValueCents:enteredOutstandingCents;
     const restored=plannedLiters.trim()?decimal(plannedLiters):originalLiters;
     if(restored!==null&&(!Number.isFinite(restored)||restored<=0))return setMsg("Informe uma quantidade de litros maior que zero.");
     if(!plannedLiters.trim()&&originalLiters!==null)setPlannedLiters(String(originalLiters).replace(".",","));
-    if(!Number.isSafeInteger(totalValueCents)||totalValueCents<=0)return setMsg("Informe um valor total válido.");
+    if(!Number.isSafeInteger(totalValueCents)||(paymentStatus==="cortesia"?totalValueCents!==0:totalValueCents<=0))return setMsg(paymentStatus==="cortesia"?"Viagem cortesia deve ter valor zero.":"Informe um valor total válido.");
     if(paymentStatus==="total"&&outstandingCents!==0)return setMsg("Viagem totalmente paga não pode ter valor em aberto.");
     if(wasEditing&&paymentStatus==="parcial"&&(!Number.isSafeInteger(outstandingCents)||outstandingCents<=0||outstandingCents>=totalValueCents))return setMsg("No pagamento parcial, o valor em aberto deve ser maior que zero e menor que o valor total.");
     if(wasEditing&&paymentStatus==="nao_pago"&&outstandingCents!==totalValueCents)return setMsg("Em viagem não paga, o valor em aberto deve ser igual ao valor total.");
@@ -468,7 +472,8 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
               Valor total da viagem (R$)
               <input
                 required
-                min="0.01"
+                min="0"
+                readOnly={paymentStatus==="cortesia"}
                 inputMode="decimal"
                 type="text"
                 value={totalValue}
@@ -476,10 +481,11 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                 placeholder="Ex.: 1.250,00"
                 className="mt-2 h-16 w-full rounded-xl border p-3 text-2xl"
               />
+              {paymentStatus==="cortesia"&&<span className="mt-2 block text-sm font-bold text-violet-800">Viagem gratuita: R$ 0,00, sem valor a receber.</span>}
             </label>
             <label className="block rounded-xl border-2 border-[#0b7184] bg-sky-50 p-4 text-lg font-bold">Esta viagem terá abastecimento?<select value={noFueling?"nao":"sim"} onChange={event=>setNoFueling(event.target.value==="nao")} className="mt-2 min-h-14 w-full rounded-xl border bg-white p-3 text-xl"><option value="sim">Sim</option><option value="nao">Não — sem solicitação, autorização ou abastecimento</option></select><span className="mt-2 block text-sm font-normal">Você pode mudar esta opção na edição. O histórico já registrado será preservado.</span></label>
             {!noFueling&&<label className="block text-lg font-bold">Litros previstos / solicitados<input inputMode="decimal" value={plannedLiters} onChange={event=>setPlannedLiters(event.target.value)} placeholder="Opcional: ex. 100,50" className="mt-2 h-16 w-full rounded-xl border p-3 text-2xl"/><span className="mt-2 block text-sm font-normal text-slate-600">Na edição, se salvar este campo vazio, os litros anteriores serão mantidos.</span></label>}
-            {<><label className="block text-lg font-bold">Situação de pagamento<select value={paymentStatus} onChange={(event)=>{const status=event.target.value as "total"|"parcial"|"nao_pago";setPaymentStatus(status);if(status==="total")setOutstandingValue("");if(status==="nao_pago")setOutstandingValue(totalValue)}} className="mt-2 h-16 w-full rounded-xl border bg-white p-3 text-xl"><option value="total">Totalmente paga</option><option value="parcial">Parcialmente paga</option><option value="nao_pago">Não paga</option></select></label>{paymentStatus==="parcial"&&<label className="block text-lg font-bold">Valor em aberto (R$)<input required inputMode="decimal" value={outstandingValue} onChange={(event)=>setOutstandingValue(event.target.value)} placeholder="Ex.: 350,00" className="mt-2 h-16 w-full rounded-xl border p-3 text-2xl"/></label>}</>}
+            {<><label className="block text-lg font-bold">Situação de pagamento<select value={paymentStatus} onChange={(event)=>{const status=event.target.value as "total"|"parcial"|"nao_pago"|"cortesia";setPaymentStatus(status);if(status==="total"||status==="cortesia")setOutstandingValue("");if(status==="cortesia")setTotalValue("0,00");if(status==="nao_pago")setOutstandingValue(totalValue)}} className="mt-2 h-16 w-full rounded-xl border bg-white p-3 text-xl"><option value="total">Totalmente paga</option><option value="parcial">Parcialmente paga</option><option value="nao_pago">Não paga</option><option value="cortesia">Cortesia (gratuita)</option></select></label>{paymentStatus==="parcial"&&<label className="block text-lg font-bold">Valor em aberto (R$)<input required inputMode="decimal" value={outstandingValue} onChange={(event)=>setOutstandingValue(event.target.value)} placeholder="Ex.: 350,00" className="mt-2 h-16 w-full rounded-xl border p-3 text-2xl"/></label>}</>}
             <label className="block text-lg font-bold">
               Roteiro
               <textarea
@@ -676,12 +682,15 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                     data-trip-status={completed ? "completed" : trip.noFueling ? "not_required" : trip.fuelCanceledAt ? "canceled" : trip.requestStatus || "missing"}
                     style={{backgroundColor:completed?"#e7edf3":status.background,borderColor:completed?"#94a3b8":status.border,color:"#0f172a"}}
                   >
-                    <p className="inline-flex rounded-full bg-[#102b43] px-3 py-1 text-base font-extrabold text-white">{trip.controlNumber||`V-${String(trip.id).padStart(3,"0")}`}</p>
-                    {completed&&<p className="mt-3 inline-flex rounded-full border-2 border-slate-500 bg-slate-200 px-3 py-2 text-base font-extrabold text-slate-800">✓ Viagem realizada</p>}
+                    <div className="flex flex-wrap items-center gap-3">
+                      <p className="inline-flex rounded-full bg-[#102b43] px-3 py-1 text-base font-extrabold text-white">{trip.controlNumber||`V-${String(trip.id).padStart(3,"0")}`}</p>
+                      <p className="text-2xl font-extrabold leading-tight text-slate-950">{trip.vehicleLabel}</p>
+                    </div>
+                    {completed&&<p className="mt-3 inline-flex rounded-full border-2 border-slate-500 bg-slate-200 px-3 py-2 text-base font-extrabold text-slate-800">✓ Viagem finalizada manualmente{trip.finalizedBy?` por ${trip.finalizedBy}`:""}</p>}
+                    {completed&&isAdm&&<button type="button" onClick={async()=>{if(!window.confirm(`Reabrir ${trip.controlNumber||`V-${trip.id}`} para edição e uso nas rotinas operacionais?`))return;try{const response=await fetch(`/api/trips/${trip.id}/reopen`,{method:"POST"}),data=await response.json();if(!response.ok)throw Error(data.error||"Falha ao reabrir.");setMsg("Viagem reaberta. Voltou ao status Aberta.");await load();}catch(error){setMsg(error instanceof Error?error.message:"Falha ao reabrir a viagem.");}}} className="mt-3 inline-flex min-h-12 items-center rounded-xl bg-[#096a9b] px-5 py-2 text-base font-extrabold text-white">Reabrir viagem</button>}
                     {Number(trip.hasLateActivity)===1&&<p className="mt-3 inline-flex items-center gap-2 rounded-xl border-2 border-amber-500 bg-amber-100 px-3 py-2 text-base font-extrabold text-amber-950"><span className="text-xl" aria-hidden="true">⚠</span>MOVIMENTAÇÃO FORA DO PRAZO</p>}
                     {(trip.lateActivities||[]).map((activity,index)=><p key={index} className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-950">⚠ {lateActionLabel(activity.action)} por {activity.actorName}. Data do fato: {dateTime(activity.effectiveAt)} · registrado no app: {dateTime(activity.registeredAt)}.</p>)}
                     {trip.fuelCanceledAt&&<p className="mt-3 text-base font-semibold">Cancelado por {trip.fuelCanceledBy||"Não informado"} em {dateTime(trip.fuelCanceledAt)}. Motivo: {trip.fuelCancelReason}</p>}
-                    <p className="mt-3 flex flex-wrap gap-2 text-base font-extrabold"><span className="rounded-full bg-white/75 px-3 py-1">{trip.vehicleCode||`CAR-${String(trip.vehicleId).padStart(3,"0")}`}</span><span className="rounded-full bg-white/75 px-3 py-1">Veículo {trip.vehicleLabel}</span>{trip.fuelingCode&&<span className="rounded-full bg-emerald-700 px-3 py-1 text-white">{trip.fuelingCode}</span>}</p>
                     <p className="mt-1 text-lg">
                       {formatDate(trip.departureDate)} até{" "}
                       {formatDate(trip.arrivalDate)}
@@ -705,7 +714,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                         ? names.join(", ")
                         : "Nenhum motorista associado"}
                     </p>
-                    {confirmId === trip.id ? (
+                    {!completed&&(confirmId === trip.id ? (
                       <div className="mt-5 rounded-xl border-2 border-[#b3262b] bg-red-50 p-4">
                         <p className="text-lg font-bold text-[#7f1d1d]">
                           Cancelar esta viagem?
@@ -746,7 +755,13 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
                         </button>
                         {!trip.noFueling&&!trip.fuelCanceledAt&&<button type="button" onClick={async()=>{const reason=window.prompt("Cancelar abastecimento desta viagem? A viagem permanece no histórico e nos relatórios. Litros, produtos e despesas serão excluídos dos cálculos. Informe o motivo:");if(reason===null)return;if(reason.trim().length<3){setMsg("Informe um motivo com pelo menos 3 caracteres.");return;}if(!window.confirm("Confirma o cancelamento do abastecimento?"))return;try{const response=await fetch(`/api/trips/${trip.id}/cancel-fueling`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reason})});const data=await response.json();if(!response.ok)throw Error(data.error);setMsg(data.message);await load();}catch(error){setMsg(error instanceof Error?error.message:"Falha ao cancelar.");}}} className="min-h-12 rounded-xl border-2 border-red-800 bg-white px-4 py-2 text-lg font-bold text-red-800">Cancelar abastecimento</button>}
                       </div>
-                    )}
+                    ))}
+                    <div className="mt-5 flex justify-end">
+                      <div className="inline-flex overflow-hidden rounded-full bg-slate-800 text-sm font-extrabold text-white shadow-sm">
+                        <span className="px-3 py-1.5">{trip.vehicleCode||`CAR-${String(trip.vehicleId).padStart(3,"0")}`}</span>
+                        <span className="border-l border-white/25 px-3 py-1.5">{trip.fuelingCode||'Sem AB-ID'}</span>
+                      </div>
+                    </div>
                   </article>
                 );
               })}

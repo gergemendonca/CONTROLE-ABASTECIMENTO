@@ -1,17 +1,20 @@
-import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
-import {getSession} from '../admin-auth';
+import {ensureTripCancellation,operationalTrip} from '@/app/lib/trip-cancellation';
+import {isAdmin} from '../admin-auth';
+import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
+
 import {ensureTripFuelOptions} from '@/app/lib/trip-fuel-options';
-export async function GET(req:Request){
- const user=await getSession(req);if(!user||user.bootstrap)return Response.json({notifications:[]});
- try{await ensureTripFuelOptions();
- const items=await env.DB!.prepare(`SELECT id,title,message,href,read_at AS readAt,created_at AS createdAt FROM app_notifications
- WHERE user_id=? AND (href NOT LIKE '%pedido=%' OR NOT EXISTS (
- SELECT 1 FROM fuel_requests fr JOIN trips t ON t.id=fr.trip_id
- WHERE fr.id=CAST(substr(app_notifications.href,instr(app_notifications.href,'pedido=')+7) AS INTEGER) AND COALESCE(t.no_fueling,0)=1))
- ORDER BY created_at DESC LIMIT 50`).bind(user.id).all();
- return Response.json({notifications:items.results},{headers:{'Cache-Control':'no-store'}});
- }catch{return Response.json({error:'Não foi possível consultar os avisos.'},{status:503});}
+export async function GET(request:Request){
+ if(!await isAdmin(request))return Response.json({error:'Acesso restrito.'},{status:403});
+ await ensureTripControl();await ensureTripFuelOptions();await ensureTripCancellation();
+ const url=new URL(request.url),tripIds=url.searchParams.getAll('trip').map(Number).filter(Number.isInteger),liters=url.searchParams.getAll('liters'),kms=url.searchParams.getAll('km'),contactIds=url.searchParams.getAll('contact').map(Number).filter(Number.isInteger);
+ if(!tripIds.length||tripIds.length!==liters.length||tripIds.length!==kms.length)return Response.json({error:'Dados da solicitação inválidos.'},{status:400});
+ const lines=['*SOLICITAÇÃO DE ABASTECIMENTO*',''];
+ for(let index=0;index<tripIds.length;index++){
+  const trip=await env.DB!.prepare(`SELECT t.id,${controlSql('t')},v.label AS vehicleLabel,t.route,COALESCE(t.departure_date,t.travel_date) AS departureDate,COALESCE(t.arrival_date,t.travel_date) AS arrivalDate FROM trips t JOIN vehicles v ON v.id=t.vehicle_id WHERE t.id=? AND ${operationalTrip('t')} AND COALESCE(t.no_fueling,0)=0`).bind(tripIds[index]).first<{controlNumber:string;vehicleLabel:string;route:string;departureDate:string;arrivalDate:string}>();
+  if(!trip)continue;
+  lines.push(`${index+1}. *Controle da viagem:* ${trip.controlNumber}`,`*Carro:* ${trip.vehicleLabel}`,`*Roteiro:* ${trip.route}`,`*Período:* ${String(trip.departureDate).split('-').reverse().join('/')} a ${String(trip.arrivalDate).split('-').reverse().join('/')}`,`*Litros solicitados:* ${liters[index]} L`,`*KM previsto:* ${kms[index]} km`,'');
+ }
+ if(contactIds.length){const marks=contactIds.map(()=>'?').join(',');const contacts=await env.DB!.prepare(`SELECT name FROM contacts WHERE id IN (${marks})`).bind(...contactIds).all();lines.push(`*Destinatários:* ${(contacts.results as any[]).map(contact=>contact.name).join(', ')}`)}
+ return Response.redirect('https://wa.me/?text='+encodeURIComponent(lines.join('\n')),302);
 }
-async function loggedPUT(req:Request){const user=await getSession(req);if(!user||user.bootstrap)return Response.json({error:'Faça login.'},{status:403});const {id}=await req.json() as {id:number};await env.DB!.prepare('UPDATE app_notifications SET read_at=? WHERE id=? AND user_id=?').bind(new Date().toISOString(),id,user.id).run();return Response.json({ok:true});}
-export const PUT=withSystemLog(loggedPUT);
