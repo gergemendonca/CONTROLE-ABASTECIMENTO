@@ -1,0 +1,40 @@
+ATUALIZAÇÃO v155 — CORREÇÃO DE PERMISSÃO PARA FINALIZAR / REABRIR VIAGENS
+Base: v154 (inclui v153 e v152)
+
+CAUSA IDENTIFICADA NO CÓDIGO:
+O acesso à Área ADM aceita os grupos "adm" e "gerencia". Entretanto,
+a tela Lista de viagens e as APIs de finalizar/reabrir permitiam apenas
+"adm" ou a sessão especial bootstrap. Para usuários "gerencia", o botão
+ficava desabilitado e as APIs rejeitavam a ação (HTTP 403).
+
+CORREÇÕES:
+1) Lista de viagens: botão "Finalizar viagens abertas" habilitado para
+   contas de grupo "adm" ou "gerencia" e para a conta bootstrap, desde
+   que a sessão seja válida e a troca de senha não esteja pendente.
+2) API POST /api/trips/finalize: mesma permissão da Área ADM, usando a
+   função central isManagementUser (evita divergências entre tela e API).
+3) Editar viagens: botão "Reabrir viagem" com a mesma regra.
+4) API POST /api/trips/:id/reopen: autoriza os mesmos perfis habilitados na
+   interface e mantém os bloqueios às demais contas.
+5) Identificador "v155" aparece ao lado do botão na Lista de viagens.
+
+NÃO ALTERADO:
+Nenhum lançamento ou histórico existente, regra de abastecimento,
+solicitação, autorização, pagamento, ID ou dados do banco foi alterado.
+Não é necessária migração do banco para ESTA correção.
+
+TESTES PARA O ADMINISTRADOR APÓS PUBLICAR:
+A) Abrir /admin/lista-viagens, conferir a inscrição "v155".
+B) Com conta "adm": botão habilitado.
+C) Com conta "gerencia": botão habilitado.
+D) Com conta "motorista": sem acesso à área ADM.
+E) Finalizar UMA viagem teste (operacionalmente segura), conferir que
+   não aparece nas telas operacionais e que surge em Editar viagens.
+F) Reabrir a mesma viagem em Editar viagens. Verificar retorno à lista.
+
+DIAGNÓSTICO DE PUBLICAÇÃO:
+Se "v155" não aparece ao lado do botão, a aplicação aberta no
+navegador não está servindo esta nova versão; republicar e recarregar.
+
+IMPORTANTE: ZIP preparado e verificado localmente, NÃO publicado.
+Faça backup do banco D1 antes do deploy em produção.

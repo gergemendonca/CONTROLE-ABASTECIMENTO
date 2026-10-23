@@ -106,7 +106,7 @@ export default function AdminClient({ mode = "list" }: { mode?: "list" | "new" }
     setTrips(tripsData.trips || []);
     if (usersResponse.ok) setUsers(usersData.users || []);
   }
-  useEffect(()=>{void fetch('/api/admin-session',{cache:'no-store'}).then(r=>r.json()).then(data=>setIsAdm(data.user?.groupName==='adm')).catch(()=>setIsAdm(false))},[]);
+  useEffect(()=>{void fetch('/api/admin-session',{cache:'no-store'}).then(r=>r.json()).then(data=>setIsAdm(Boolean(data.user&&!data.user.passwordChangeRequired&&(data.user.bootstrap||data.user.groupName==='adm'||data.user.groupName==='gerencia')))).catch(()=>setIsAdm(false))},[]);
   useEffect(() => {
     void (async () => {
       const setup = await fetch("/api/system/setup", { method: "POST" }),

@@ -1,12 +1,12 @@
 import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
-import {getSession} from '../../admin-auth';
+import {getSession,isManagementUser} from '../../admin-auth';
 import {ensureTripCancellation} from '@/app/lib/trip-cancellation';
 
-/** Finalização manual somente pelo ADM. Esta operação não altera pedidos, abastecimentos ou pagamentos. */
+/** Finalização manual somente pela ADM/Gerência. Esta operação não altera pedidos, abastecimentos ou pagamentos. */
 async function loggedPOST(req:Request){
  const user=await getSession(req);
- if(!user||user.passwordChangeRequired||!(user.bootstrap||user.groupName==='adm'))return Response.json({error:'Somente ADM pode finalizar viagens.'},{status:403});
+ if(!isManagementUser(user)||user?.passwordChangeRequired)return Response.json({error:'Somente usuários ADM ou Gerência podem finalizar viagens.'},{status:403});
  try{
   await ensureTripCancellation();
   const payload=await req.json() as {tripIds?:unknown};
@@ -18,7 +18,7 @@ async function loggedPOST(req:Request){
   const now=new Date().toISOString();
   const statements=ids.map(id=>env.DB!.prepare("UPDATE trips SET finalized_at=?,finalized_by=?,finalized_by_name=? WHERE id=? AND COALESCE(canceled_at,'')='' AND COALESCE(finalized_at,'')=''").bind(now,user.bootstrap?null:user.id,user.name,id));
   await env.DB!.batch(statements);
-  return Response.json({finalized:true,count:ids.length,logDetails:`Finalização manual pelo ADM de ${ids.length} viagem(ns): ${ids.join(', ')}`});
+  return Response.json({finalized:true,count:ids.length,logDetails:`Finalização manual por ADM/Gerência de ${ids.length} viagem(ns): ${ids.join(', ')}`});
  }catch(error){console.error('Falha na finalização manual:',error);return Response.json({error:'Não foi possível finalizar as viagens. Nenhum abastecimento foi alterado.'},{status:503})}
 }
 export const POST=withSystemLog(loggedPOST);
