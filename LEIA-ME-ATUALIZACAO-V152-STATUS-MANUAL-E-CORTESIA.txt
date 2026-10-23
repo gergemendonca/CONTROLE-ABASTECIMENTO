@@ -1,0 +1,36 @@
+CONTROLE DE ABASTECIMENTO — ATUALIZAÇÃO V152
+
+BASE: v151 — IDs no rodapé do card
+
+1. Cancelar uma viagem abastecida
+   - Permitido cancelar qualquer viagem ABERTA mediante motivo, mesmo se já abastecida.
+   - O abastecimento físico, combustível, hodômetro, valores, IDs e histórico do carro permanecem.
+   - Solicitações pendentes/autorizações não utilizadas da viagem cancelada são canceladas, para não bloquear o carro.
+   - Se o abastecimento físico for recente (até 2 dias), o fluxo existente de troca/atribuição do carro permite reaproveitá-lo depois de confirmar que a viagem anterior não ocorreu.
+
+2. Cortesia
+   - Novo status "Cortesia (gratuita)" nos formulários e relatórios de pagamento.
+   - Valor total e valor em aberto obrigatoriamente R$ 0,00.
+   - Cortesia não elimina a necessidade de abastecimento, se prevista.
+
+3. Histórico de abastecimentos
+   - "Abastecimentos feitos" e "Lista de abastecimentos": registros mais recentes no topo.
+   - Critério primário data/hora do abastecimento, secundário ID do lançamento.
+
+4. Finalização manual de viagens
+   - Em "Lista de viagens", ADM aciona "Finalizar viagens abertas".
+   - Exibe apenas viagens ABERTAS, ordenadas por data da saída (decrescente), com caixas de seleção.
+   - ADM marca uma ou mais e confirma finalização.
+   - Status FINALIZADA gravado com data, usuário e ID, não derivado de número de dias.
+   - FINALIZADAS ocultas das listas e ações operacionais (pedidos normais/extraordinários, autorizações,
+     reenvio WhatsApp e vinculação para novo abastecimento).
+   - Aparecem esmaecidas em "Editar Viagens" (área administrativa), com botão "Reabrir viagem" somente ADM.
+   - Reabrir restabelece a condição ABERTA.
+   - Não houve exclusão de viagens, combustíveis, pedidos, valores, pagamentos ou histórico.
+   - Relatórios históricos e abastecimentos realizados permanecem consultáveis.
+
+MIGRAÇÃO D1: Adiciona colunas trips.finalized_at, finalized_by, finalized_by_name por ALTER TABLE,
+sem apagar registros. Executada automaticamente em /api/system/setup e na leitura das viagens.
+
+NÃO PUBLICA AUTOMATICAMENTE. Para atualizar a produção, implantar o projeto desta versão pelo
+fluxo utilizado para as versões anteriores. Preservar o banco D1 existente.

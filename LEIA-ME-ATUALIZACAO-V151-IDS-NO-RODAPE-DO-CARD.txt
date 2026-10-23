@@ -1,0 +1,11 @@
+ATUALIZAÇÃO V151 — ORGANIZAÇÃO VISUAL DOS IDS NO CARD
+
+Alteração visual somente na tela Editar Viagens:
+
+- V-ID e nome do carro permanecem no topo do card, em destaque.
+- CAR-ID e AB-ID saem da parte superior.
+- CAR-ID e AB-ID passam para o canto inferior direito do card.
+- Os dois ficam no mesmo selo, com o mesmo fundo, separados apenas por uma linha.
+
+Não houve qualquer alteração em banco de dados, regras de abastecimento,
+troca de carro, pedidos, autorizações, cores ou histórico.

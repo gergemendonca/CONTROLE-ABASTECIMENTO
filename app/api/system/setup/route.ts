@@ -2,6 +2,7 @@ import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
 import {ensureUserPasswordPolicy,isAdmin} from '../../admin-auth';
 import {ensureVehicleFuelAssignment} from '@/app/lib/vehicle-fueling-assignment';
+import {ensureTripCancellation} from '@/app/lib/trip-cancellation';
 
 async function loggedPOST(req:Request){
  if(!await isAdmin(req))return Response.json({error:'Apenas administrador.'},{status:403});
@@ -41,7 +42,7 @@ async function loggedPOST(req:Request){
   if(!requestColumns.results.some(column=>column.name==='extraordinary'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN extraordinary integer DEFAULT 0 NOT NULL').run();
   await env.DB!.batch([env.DB!.prepare('CREATE INDEX IF NOT EXISTS fueling_trip_idx ON fueling (trip_id)'),env.DB!.prepare('CREATE INDEX IF NOT EXISTS fueling_request_idx ON fueling (fuel_request_id)')]);
   // Atualização de produção: jamais apagar registros no setup automático.
-  await ensureUserPasswordPolicy();await ensureVehicleFuelAssignment();
+  await ensureUserPasswordPolicy();await ensureTripCancellation();await ensureVehicleFuelAssignment();
   return Response.json({ok:true,testDataCleared:false});
  }catch{return Response.json({error:'Não foi possível preparar a atualização do banco.'},{status:503})}
 }
