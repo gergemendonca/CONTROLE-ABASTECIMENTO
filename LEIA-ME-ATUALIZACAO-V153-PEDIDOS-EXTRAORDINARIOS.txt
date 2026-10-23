@@ -1,0 +1,16 @@
+ATUALIZAÇÃO V153 — STATUS DE PEDIDOS EXTRAORDINÁRIOS
+
+Base: v152 (mantém as alterações anteriores e os demais fluxos).
+
+CORREÇÃO 1 — Tela Autorizados
+O indicador "ABASTECIMENTO JÁ REALIZADO" agora só recebe data de um abastecimento cuja coluna fueling.fuel_request_id corresponda exatamente ao ID do pedido autorizado (fuel_requests.id). Um abastecimento inicial anterior do mesmo carro e viagem não fará mais um pedido extraordinário recém autorizado aparecer como realizado.
+
+CORREÇÃO 2 — Quando um pedido é considerado utilizado
+Os pedidos extraordinários só são considerados utilizados se um lançamento de abastecimento tiver fuel_request_id igual ao ID do pedido; portanto, um abastecimento feito em outro pedido não consome a autorização extraordinária. Pedidos comuns antigos continuam aceitando, como exceção de compatibilidade, lançamentos diretos sem fuel_request_id para mesmo carro, viagem e data posterior ao pedido. Um lançamento explicitamente vinculado a outro pedido nunca consome o pedido atual.
+
+REGRAS PRESERVADAS
+1. Autorização cria/atualiza apenas a autorização (AU-ID), não cria um novo abastecimento.
+2. O lançamento real registra o abastecimento físico (AB-ID) e vincula seu ID de pedido quando há autorização válida.
+3. Rotinas de viagem, pagamento, finalização, cancelamento e telas não citadas permanecem inalteradas.
+
+ATENÇÃO: este pacote foi corrigido e inspecionado localmente a partir da v152, mas NÃO foi instalado nem testado no banco D1 de produção. Salve backup antes de publicar e valide com um pedido extraordinário recém autorizado de veículo com abastecimento anterior.
