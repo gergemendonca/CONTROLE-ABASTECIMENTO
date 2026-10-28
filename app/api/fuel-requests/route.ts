@@ -5,12 +5,12 @@ import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
 import {ensureTripAudit,recordTripAudit} from '@/app/lib/trip-audit';
 import {ensureVehicleFuelAssignment} from '@/app/lib/vehicle-fueling-assignment';
 import {setVehicleFuelState,tripFueledSql} from '@/app/lib/vehicle-fuel-status';
-import {activeTrip,operationalTrip,ensureTripCancellation} from '@/app/lib/trip-cancellation';
+import {activeTrip,ensureTripCancellation} from '@/app/lib/trip-cancellation';
 import {requestUnusedSql} from '@/app/lib/fuel-request-usage';
 import {authorizationCodeSql,ensurePublicIds,requestCodeSql} from '@/app/lib/public-ids';
 
-type Item={tripId:number;liters:number;routeKm:number;paymentStatus:'total'|'parcial'|'nao_pago'|'cortesia';outstandingCents:number;clientPaid?:boolean;extraordinary?:boolean};
-const paymentOk=(value:string)=>value==='total'||value==='parcial'||value==='nao_pago'||value==='cortesia';
+type Item={tripId:number;liters:number;routeKm:number;paymentStatus:'total'|'parcial'|'nao_pago'|'apos_viagem';outstandingCents:number;clientPaid?:boolean;extraordinary?:boolean};
+const paymentOk=(value:string)=>value==='total'||value==='parcial'||value==='nao_pago'||value==='apos_viagem';
 const today=()=>{const parts=new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Bahia',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());const field=(name:string)=>parts.find(part=>part.type===name)?.value||'';return `${field('year')}-${field('month')}-${field('day')}`};
 async function notify(userIds:number[],title:string,message:string,href:string){
  const ids=[...new Set(userIds)].filter(Number.isSafeInteger);
@@ -35,17 +35,16 @@ async function loggedPOST(req:Request){
    // Pedido comum respeita "sem abastecimento". O extraordinário é justamente
    // a exceção operacional para uma necessidade surgida durante o trajeto.
    const fuelCondition=extraordinary?'1=1':'COALESCE(no_fueling,0)=0';
-   const trip=await env.DB!.prepare(`SELECT vehicle_id AS vehicleId,COALESCE(departure_date,travel_date) AS departureDate,COALESCE(arrival_date,travel_date) AS arrivalDate,total_value_cents AS totalValueCents,${controlSql('trips')} FROM trips WHERE id=? AND ${operationalTrip('trips')} AND COALESCE(fuel_canceled_at,'')='' AND ${fuelCondition}`).bind(item.tripId).first<{vehicleId:number;departureDate:string;arrivalDate:string;totalValueCents:number;controlNumber:string}>();
+   const trip=await env.DB!.prepare(`SELECT vehicle_id AS vehicleId,COALESCE(departure_date,travel_date) AS departureDate,COALESCE(arrival_date,travel_date) AS arrivalDate,total_value_cents AS totalValueCents,${controlSql('trips')} FROM trips WHERE id=? AND ${activeTrip('trips')} AND COALESCE(fuel_canceled_at,'')='' AND ${fuelCondition}`).bind(item.tripId).first<{vehicleId:number;departureDate:string;arrivalDate:string;totalValueCents:number;controlNumber:string}>();
    // O pedido sempre é registrado no momento atual. A retroatividade vem da
    // data da própria viagem, e não de uma data informada nesta etapa.
    const isRetroactive=!!trip&&trip.arrivalDate<today();
    if(!trip||(!management&&isRetroactive))return Response.json({error:'A viagem está sem abastecimento, cancelada ou fora do período permitido para seu usuário.'},{status:409});
    const total=Number(trip.totalValueCents||0);
-   if(total<=0&&item.paymentStatus!=='cortesia')return Response.json({error:'Esta viagem não possui valor total válido. Edite a viagem antes de solicitar autorização.'},{status:400});
-   if(item.paymentStatus==='cortesia'&&(total!==0||item.outstandingCents!==0))return Response.json({error:'Viagem cortesia deve ter valor zero e não pode ter saldo em aberto.'},{status:400});
+   if(total<=0)return Response.json({error:'Esta viagem não possui valor total válido. Edite a viagem antes de solicitar autorização.'},{status:400});
    if(item.paymentStatus==='total'&&item.outstandingCents!==0)return Response.json({error:'Viagem totalmente paga não pode ter valor em aberto.'},{status:400});
    if(item.paymentStatus==='parcial'&&(item.outstandingCents<=0||item.outstandingCents>=total))return Response.json({error:'Em pagamento parcial, o valor em aberto deve ser maior que zero e menor que o valor total da viagem.'},{status:400});
-   if(item.paymentStatus==='nao_pago'&&item.outstandingCents!==total)return Response.json({error:'Em viagem não paga, o valor em aberto deve ser exatamente igual ao valor total da viagem.'},{status:400});
+   if((item.paymentStatus==='nao_pago'||item.paymentStatus==='apos_viagem')&&item.outstandingCents!==total)return Response.json({error:'O valor em aberto deve ser exatamente igual ao valor total da viagem.'},{status:400});
    if(extraordinary&&!management)return Response.json({error:'Somente Adm ou Gerência pode solicitar abastecimento extraordinário.'},{status:403});
    const alreadyFueled=await env.DB!.prepare(`SELECT t.id FROM trips t WHERE t.id=? AND ${tripFueledSql('t')} LIMIT 1`).bind(item.tripId).first();
    const inProgress=!!trip&&trip.departureDate<=today()&&trip.arrivalDate>=today();
@@ -89,7 +88,7 @@ export async function GET(req:Request){
  // abastecimento inicial anterior não pode ocultar uma autorização extraordinária.
  let where=status==='authorized'?` WHERE f.status='authorized' AND ${requestUnusedSql('f','completed')}`:` WHERE f.status IN ('pending','authorized') AND ${requestUnusedSql('f','completed')} AND (f.status='authorized' OR COALESCE(t.arrival_date,t.travel_date)>=? OR COALESCE(f.retroactive,0)=1)`,binds:unknown[]=status==='authorized'?[]:[today()];
  if(byId){where+=' AND f.id=?';binds.push(requestId)}else if(byTrip){where+=' AND f.trip_id=?';binds.push(tripId)}else if(status&&status!=='authorized'){where+=' AND f.status=?';binds.push(status)}
- const q=`SELECT f.id,f.trip_id AS tripId,${requestCodeSql('f')} AS requestCode,${authorizationCodeSql('f')} AS authorizationCode,${controlSql('t')},f.liters,f.route_km AS routeKm,f.payment_status AS paymentStatus,f.outstanding_cents AS outstandingCents,COALESCE(f.client_paid,0) AS clientPaid,COALESCE(f.retroactive,0) AS retroactive,COALESCE(f.extraordinary,0) AS extraordinary,f.status,f.created_at AS createdAt,COALESCE(f.registered_at,f.created_at) AS registeredAt,f.authorized_at AS authorizedAt,(SELECT completed.created_at FROM fueling completed WHERE completed.fuel_request_id=f.id ORDER BY completed.created_at DESC,completed.id DESC LIMIT 1) AS fueledAt,v.label AS vehicleLabel,t.route,t.departure_date AS departureDate,t.arrival_date AS arrivalDate,COALESCE(t.total_value_cents,0) AS totalValueCents,COALESCE(f.requested_by_name,u.name,'Não informado') AS requestedBy,COALESCE(f.authorized_by_name,a.name,'Não informado') AS authorizedBy FROM fuel_requests f JOIN trips t ON t.id=f.trip_id JOIN vehicles v ON v.id=t.vehicle_id LEFT JOIN app_users u ON u.id=f.requested_by LEFT JOIN app_users a ON a.id=f.authorized_by${where} AND ${operationalTrip('t')} AND COALESCE(t.fuel_canceled_at,'')='' AND (COALESCE(t.no_fueling,0)=0 OR COALESCE(f.extraordinary,0)=1) AND f.status<>'canceled' ORDER BY CASE f.status WHEN 'pending' THEN 0 ELSE 1 END,f.created_at DESC`;
+ const q=`SELECT f.id,f.trip_id AS tripId,${requestCodeSql('f')} AS requestCode,${authorizationCodeSql('f')} AS authorizationCode,${controlSql('t')},f.liters,f.route_km AS routeKm,f.payment_status AS paymentStatus,f.outstanding_cents AS outstandingCents,COALESCE(f.client_paid,0) AS clientPaid,COALESCE(f.retroactive,0) AS retroactive,COALESCE(f.extraordinary,0) AS extraordinary,f.status,f.created_at AS createdAt,COALESCE(f.registered_at,f.created_at) AS registeredAt,f.authorized_at AS authorizedAt,(SELECT completed.created_at FROM fueling completed WHERE completed.vehicle_id=t.vehicle_id AND completed.trip_id=t.id ORDER BY completed.created_at DESC LIMIT 1) AS fueledAt,v.label AS vehicleLabel,t.route,t.departure_date AS departureDate,t.arrival_date AS arrivalDate,COALESCE(t.total_value_cents,0) AS totalValueCents,COALESCE(f.requested_by_name,u.name,'Não informado') AS requestedBy,COALESCE(f.authorized_by_name,a.name,'Não informado') AS authorizedBy FROM fuel_requests f JOIN trips t ON t.id=f.trip_id JOIN vehicles v ON v.id=t.vehicle_id LEFT JOIN app_users u ON u.id=f.requested_by LEFT JOIN app_users a ON a.id=f.authorized_by${where} AND ${activeTrip('t')} AND COALESCE(t.fuel_canceled_at,'')='' AND (COALESCE(t.no_fueling,0)=0 OR COALESCE(f.extraordinary,0)=1) AND f.status<>'canceled' ORDER BY CASE f.status WHEN 'pending' THEN 0 ELSE 1 END,f.created_at DESC`;
  const rows=await env.DB!.prepare(q).bind(...binds).all();
  return Response.json({requests:(rows.results||[]).map((item:any)=>canViewFinancial?item:{...item,totalValueCents:null,paymentStatus:null,outstandingCents:null}),canViewFinancial});
 }

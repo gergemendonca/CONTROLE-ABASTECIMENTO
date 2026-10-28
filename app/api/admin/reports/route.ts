@@ -29,12 +29,13 @@ export async function GET(req:Request){
   const to=isoDate(url.searchParams.get('to'),today);
   const canceled=url.searchParams.get('kind')==='canceladas';
   const payments=url.searchParams.get('kind')==='pagamentos';
+  const outstanding=url.searchParams.get('kind')==='em_aberto';
   if(from>to)return Response.json({error:'A data inicial não pode ser posterior à data final.'},{status:400});
   if(canceled){
    const rows=await env.DB!.prepare(`SELECT t.id,${controlSql('t')},v.label AS vehicleLabel,t.route,COALESCE(t.departure_date,t.travel_date) AS departureDate,COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,COALESCE(t.total_km,0) AS totalKm,COALESCE(t.total_value_cents,0) AS totalValueCents,COALESCE(t.cancel_reason,'Motivo não informado') AS cancelReason,COALESCE(t.canceled_by_name,'Não informado') AS canceledBy,COALESCE(t.canceled_at,'') AS canceledAt FROM trips t JOIN vehicles v ON v.id=t.vehicle_id WHERE COALESCE(t.canceled_at,'')<>'' AND date(t.canceled_at,'-3 hours') BETWEEN ? AND ? ORDER BY t.canceled_at DESC,t.id DESC`).bind(from,to).all();
    return Response.json({from,to,generatedAt:new Date().toISOString(),records:[],trips:[],canceledTrips:rows.results||[]});
   }
-  if(payments){
+  if(payments||outstanding){
    const trips=await env.DB!.prepare(`
     SELECT t.id,${controlSql('t')},v.label AS vehicleLabel,t.route,
      COALESCE(t.departure_date,t.travel_date) AS departureDate,
@@ -45,6 +46,8 @@ export async function GET(req:Request){
      CASE WHEN COALESCE(t.no_fueling,0)=1 THEN 'not_required' WHEN COALESCE(t.fuel_canceled_at,'')<>'' THEN 'fuel_canceled' WHEN ${tripFueledSql('t')} THEN 'fueled' WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id AND fr.status IN ('pending','authorized') ORDER BY fr.id DESC LIMIT 1)='pending' THEN 'pending' WHEN (SELECT fr.status FROM fuel_requests fr WHERE fr.trip_id=t.id AND fr.status IN ('pending','authorized') ORDER BY fr.id DESC LIMIT 1)='authorized' THEN 'authorized' ELSE 'missing' END AS status
     FROM trips t JOIN vehicles v ON v.id=t.vehicle_id
     WHERE ${activeTrip('t')} AND COALESCE(t.departure_date,t.travel_date) BETWEEN ? AND ?
+    ${outstanding?`AND COALESCE((SELECT fr.payment_status FROM fuel_requests fr WHERE fr.trip_id=t.id AND fr.status IN ('pending','authorized') ORDER BY fr.id DESC LIMIT 1),t.payment_status,'nao_pago') <> 'total'
+     AND COALESCE((SELECT fr.outstanding_cents FROM fuel_requests fr WHERE fr.trip_id=t.id AND fr.status IN ('pending','authorized') ORDER BY fr.id DESC LIMIT 1),t.outstanding_cents,t.total_value_cents,0) > 0`:''}
     ORDER BY COALESCE(t.departure_date,t.travel_date) DESC,t.id DESC
    `).bind(from,to).all();
    return Response.json({from,to,generatedAt:new Date().toISOString(),records:[],trips:trips.results||[]});

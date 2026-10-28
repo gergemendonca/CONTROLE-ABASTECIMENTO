@@ -2,15 +2,15 @@
 
 import {useEffect,useMemo,useState} from 'react';
 
-type Request={id:number;tripId:number;controlNumber:string;liters:number;routeKm:number;paymentStatus:'total'|'parcial'|'nao_pago'|'cortesia';outstandingCents:number;clientPaid:number;status:'pending'|'authorized';createdAt:string;vehicleLabel:string;route:string;departureDate:string;arrivalDate:string;totalValueCents:number;requestedBy:string};
+type Request={id:number;tripId:number;controlNumber:string;liters:number;routeKm:number;paymentStatus:'total'|'parcial'|'nao_pago';outstandingCents:number;clientPaid:number;status:'pending'|'authorized';createdAt:string;vehicleLabel:string;route:string;departureDate:string;arrivalDate:string;totalValueCents:number;requestedBy:string};
 const date=(value:string)=>String(value||'').split('-').reverse().join('/');
 const dateTime=(value:string)=>new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short',timeZone:'America/Bahia'}).format(new Date(value));
 const money=(value:number)=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(Number(value||0)/100);
 
 function message(request:Request){
- const payment=request.paymentStatus==='total'?'Totalmente paga':request.paymentStatus==='parcial'?'Parcialmente paga':request.paymentStatus==='cortesia'?'Cortesia (gratuita)':'Não paga';
+ const payment=request.paymentStatus==='total'?'Totalmente paga':request.paymentStatus==='parcial'?'Parcialmente paga':'Não paga';
  const authorization=typeof window==='undefined'?'':`${window.location.origin}/autorizacoes`;
- return ['⛽ *REENVIO DE SOLICITAÇÃO DE ABASTECIMENTO*',`*Solicitado originalmente por:* ${request.requestedBy}`,`*Data do pedido:* ${dateTime(request.createdAt)}`,'',`*Controle da viagem:* ${request.controlNumber||`V-${String(request.tripId).padStart(6,'0')}`}`,`*Carro:* ${request.vehicleLabel}`,`*Roteiro:* ${request.route}`,`*Período:* ${date(request.departureDate)} a ${date(request.arrivalDate)}`,`*Litros solicitados:* ${request.liters} L`,`*KM previsto:* ${Number(request.routeKm).toLocaleString('pt-BR')} km`,`*Valor total da viagem:* ${money(request.totalValueCents)}`,`*Situação de pagamento:* ${payment}`,...(Number(request.clientPaid)===1?['*Abastecimento:* pago pelo cliente']:[]),...(payment==='Totalmente paga'||payment==='Cortesia (gratuita)'?[]:[`*Valor pendente:* ${money(request.outstandingCents)}`]),`*Abrir para autorizar:* ${authorization}`].join('\n');
+ return ['⛽ *REENVIO DE SOLICITAÇÃO DE ABASTECIMENTO*',`*Solicitado originalmente por:* ${request.requestedBy}`,`*Data do pedido:* ${dateTime(request.createdAt)}`,'',`*Controle da viagem:* ${request.controlNumber||`V-${String(request.tripId).padStart(6,'0')}`}`,`*Carro:* ${request.vehicleLabel}`,`*Roteiro:* ${request.route}`,`*Período:* ${date(request.departureDate)} a ${date(request.arrivalDate)}`,`*Litros solicitados:* ${request.liters} L`,`*KM previsto:* ${Number(request.routeKm).toLocaleString('pt-BR')} km`,`*Valor total da viagem:* ${money(request.totalValueCents)}`,`*Situação de pagamento:* ${payment}`,...(Number(request.clientPaid)===1?['*Abastecimento:* pago pelo cliente']:[]),...(payment==='Totalmente paga'?[]:[`*Valor pendente:* ${money(request.outstandingCents)}`]),`*Abrir para autorizar:* ${authorization}`].join('\n');
 }
 
 export default function ReenvioWhatsapp(){

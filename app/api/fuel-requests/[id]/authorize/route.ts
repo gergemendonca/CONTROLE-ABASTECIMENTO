@@ -3,7 +3,7 @@ import {env} from 'cloudflare:workers';
 import {isManagementUser,requireRole} from '../../../admin-auth';
 import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
 import {ensureTripAudit,recordTripAudit} from '@/app/lib/trip-audit';
-import {activeTrip,operationalTrip,ensureTripCancellation} from '@/app/lib/trip-cancellation';
+import {activeTrip,ensureTripCancellation} from '@/app/lib/trip-cancellation';
 import {ensureVehicleFuelStatus,setVehicleFuelState} from '@/app/lib/vehicle-fuel-status';
 import {authorizationCodeSql,ensurePublicIds,requestCodeSql} from '@/app/lib/public-ids';
 
@@ -17,7 +17,7 @@ async function loggedPOST(req:Request,{params}:{params:Promise<{id:string}>}){
   await ensureAuditName();await ensureTripControl();await ensureTripAudit();await ensureTripCancellation();await ensureVehicleFuelStatus();await ensurePublicIds();
     const id=Number((await params).id),management=isManagementUser(access.user);
     if(!Number.isSafeInteger(id))return Response.json({error:'Pedido inválido.'},{status:400});
-    const item=await env.DB!.prepare(`SELECT f.trip_id AS tripId,f.vehicle_id AS vehicleId,${requestCodeSql('f')} AS requestCode,${controlSql('t')},t.route,v.label AS vehicleLabel,COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,COALESCE(f.retroactive,0) AS retroactive FROM fuel_requests f JOIN trips t ON t.id=f.trip_id JOIN vehicles v ON v.id=f.vehicle_id WHERE f.id=? AND f.status='pending' AND ${operationalTrip('t')} AND (COALESCE(t.no_fueling,0)=0 OR COALESCE(f.extraordinary,0)=1) AND COALESCE(t.fuel_canceled_at,'')='' AND (COALESCE(t.arrival_date,t.travel_date)>=? OR COALESCE(f.retroactive,0)=1)`).bind(id,today()).first<{tripId:number;vehicleId:number;requestCode:string;controlNumber:string;route:string;vehicleLabel:string;arrivalDate:string;retroactive:number}>();
+    const item=await env.DB!.prepare(`SELECT f.trip_id AS tripId,f.vehicle_id AS vehicleId,${requestCodeSql('f')} AS requestCode,${controlSql('t')},t.route,v.label AS vehicleLabel,COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,COALESCE(f.retroactive,0) AS retroactive FROM fuel_requests f JOIN trips t ON t.id=f.trip_id JOIN vehicles v ON v.id=f.vehicle_id WHERE f.id=? AND f.status='pending' AND ${activeTrip('t')} AND (COALESCE(t.no_fueling,0)=0 OR COALESCE(f.extraordinary,0)=1) AND COALESCE(t.fuel_canceled_at,'')='' AND (COALESCE(t.arrival_date,t.travel_date)>=? OR COALESCE(f.retroactive,0)=1)`).bind(id,today()).first<{tripId:number;vehicleId:number;requestCode:string;controlNumber:string;route:string;vehicleLabel:string;arrivalDate:string;retroactive:number}>();
     if(!item)return Response.json({error:'Este pedido já venceu, foi tratado ou não existe.'},{status:409});
     const now=new Date().toISOString(),when=new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short',timeZone:'America/Bahia'}).format(new Date(now)),retroactive=Number(item.retroactive)===1;
     if(retroactive&&!management)return Response.json({error:'Somente Adm ou Gerência pode autorizar uma viagem fora do prazo.'},{status:403});

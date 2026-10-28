@@ -1,0 +1,12 @@
+ATUALIZAÇÃO v155 — LITROS PREVISTOS NA SOLICITAÇÃO DE ABASTECIMENTO
+
+Base: atualização v154.
+
+Alteração realizada:
+- Na tela Solicitar abastecimento, cada card de viagem agora mostra
+  “LITROS PREVISTOS” em destaque amarelo.
+- O valor exibido é a litragem prevista já cadastrada na viagem.
+- Quando a viagem não possuir litragem cadastrada, o card informa
+  “Não informado”.
+
+Arquivo preparado em 28/10/2026.

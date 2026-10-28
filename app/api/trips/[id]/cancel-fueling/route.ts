@@ -1,7 +1,7 @@
 import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
 import {getSession,isManagementUser} from '../../../admin-auth';
-import {ensureTripCancellation,operationalTrip} from '@/app/lib/trip-cancellation';
+import {ensureTripCancellation,activeTrip} from '@/app/lib/trip-cancellation';
 
 async function loggedPOST(req:Request,{params}:{params:Promise<{id:string}>}){
  const session=await getSession(req);
@@ -10,7 +10,7 @@ async function loggedPOST(req:Request,{params}:{params:Promise<{id:string}>}){
   const id=Number((await params).id),body=await req.json(),reason=String(body.reason||'').trim();
   if(!Number.isSafeInteger(id)||id<=0||reason.length<3||reason.length>500)return Response.json({error:'Informe o motivo do cancelamento (3 a 500 caracteres).'},{status:400});
   await ensureTripCancellation();
-  const trip=await env.DB!.prepare(`SELECT id,fuel_canceled_at FROM trips WHERE id=? AND ${operationalTrip('trips')}`).bind(id).first<{id:number;fuel_canceled_at:string|null}>();
+  const trip=await env.DB!.prepare(`SELECT id,fuel_canceled_at FROM trips WHERE id=? AND ${activeTrip('trips')}`).bind(id).first<{id:number;fuel_canceled_at:string|null}>();
   if(!trip)return Response.json({error:'Viagem não encontrada.'},{status:404});
   if(trip.fuel_canceled_at)return Response.json({error:'O abastecimento desta viagem já foi cancelado.'},{status:409});
   const now=new Date().toISOString();
