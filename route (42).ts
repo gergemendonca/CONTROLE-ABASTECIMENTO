@@ -1,31 +1,39 @@
 import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
+import {isManagementUser,requireRole} from '../../../admin-auth';
+import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
+import {ensureTripAudit,recordTripAudit} from '@/app/lib/trip-audit';
+import {activeTrip,ensureTripCancellation} from '@/app/lib/trip-cancellation';
+import {ensureVehicleFuelStatus,setVehicleFuelState} from '@/app/lib/vehicle-fuel-status';
+import {authorizationCodeSql,ensurePublicIds,requestCodeSql} from '@/app/lib/public-ids';
 
-export const dynamic='force-dynamic';
+const today=()=>{const parts=new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Bahia',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());const part=(name:string)=>parts.find(x=>x.type===name)?.value||'';return `${part('year')}-${part('month')}-${part('day')}`};
+async function ensureAuditName(){const columns=await env.DB!.prepare('PRAGMA table_info(fuel_requests)').all<{name:string}>();if(!columns.results.some(column=>column.name==='authorized_by_name'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN authorized_by_name text').run();if(!columns.results.some(column=>column.name==='authorized_registered_at'))await env.DB!.prepare('ALTER TABLE fuel_requests ADD COLUMN authorized_registered_at text').run();}
 
-async function syncRegisteredDrivers(){
- await env.DB!.prepare("INSERT OR IGNORE INTO drivers (name) SELECT name FROM app_users WHERE active=1 AND group_name='motorista' AND NOT EXISTS (SELECT 1 FROM drivers d WHERE lower(d.name)=lower(app_users.name))").run();
-}
-
-export async function GET(){
- try{
-  await syncRegisteredDrivers();
-  const r=await env.DB!.prepare("SELECT d.id,d.name,CASE WHEN EXISTS (SELECT 1 FROM app_users u WHERE u.active=1 AND u.group_name='motorista' AND lower(u.name)=lower(d.name)) THEN 'usuario' ELSE 'freelancer' END AS source FROM drivers d WHERE EXISTS (SELECT 1 FROM app_users u WHERE u.active=1 AND u.group_name='motorista' AND lower(u.name)=lower(d.name)) OR NOT EXISTS (SELECT 1 FROM app_users u WHERE lower(u.name)=lower(d.name)) ORDER BY CASE WHEN EXISTS (SELECT 1 FROM app_users u WHERE u.active=1 AND u.group_name='motorista' AND lower(u.name)=lower(d.name)) THEN 0 ELSE 1 END,d.name COLLATE NOCASE").all();
-  return Response.json({drivers:r.results});
- }catch{return Response.json({error:'Não foi possível carregar os motoristas cadastrados.'},{status:503})}
-}
-
-async function loggedPOST(req:Request){
- try{
-  const {name,freelancer}=await req.json() as {name?:string;freelancer?:boolean};
-  const clean=name?.trim();
-  if(!freelancer)return Response.json({error:'Motoristas permanentes devem ser cadastrados em Configurações, no grupo Motorista.'},{status:400});
-  if(!clean||clean.length>100)return Response.json({error:'Informe o nome do motorista freelancer.'},{status:400});
-  const existing=await env.DB!.prepare('SELECT id,name FROM drivers WHERE lower(name)=lower(?) LIMIT 1').bind(clean).first<{id:number;name:string}>();
-  if(existing)return Response.json({driver:{id:existing.id,name:existing.name,source:'freelancer'}});
-  const driver=await env.DB!.prepare('INSERT INTO drivers (name) VALUES (?) RETURNING id,name').bind(clean).first();
-  return Response.json({driver:{...driver,source:'freelancer'}},{status:201});
- }catch{return Response.json({error:'Não foi possível cadastrar o freelancer. Verifique se o nome já existe.'},{status:409})}
+async function loggedPOST(req:Request,{params}:{params:Promise<{id:string}>}){
+  const access=await requireRole(req,'autorizador');
+  if(!access.user)return Response.json({error:access.error},{status:403});
+  try{
+  await ensureAuditName();await ensureTripControl();await ensureTripAudit();await ensureTripCancellation();await ensureVehicleFuelStatus();await ensurePublicIds();
+    const id=Number((await params).id),management=isManagementUser(access.user);
+    if(!Number.isSafeInteger(id))return Response.json({error:'Pedido inválido.'},{status:400});
+    const item=await env.DB!.prepare(`SELECT f.trip_id AS tripId,f.vehicle_id AS vehicleId,${requestCodeSql('f')} AS requestCode,${controlSql('t')},t.route,v.label AS vehicleLabel,COALESCE(t.arrival_date,t.travel_date) AS arrivalDate,COALESCE(f.retroactive,0) AS retroactive FROM fuel_requests f JOIN trips t ON t.id=f.trip_id JOIN vehicles v ON v.id=f.vehicle_id WHERE f.id=? AND f.status='pending' AND ${activeTrip('t')} AND (COALESCE(t.no_fueling,0)=0 OR COALESCE(f.extraordinary,0)=1) AND COALESCE(t.fuel_canceled_at,'')='' AND (COALESCE(t.arrival_date,t.travel_date)>=? OR COALESCE(f.retroactive,0)=1)`).bind(id,today()).first<{tripId:number;vehicleId:number;requestCode:string;controlNumber:string;route:string;vehicleLabel:string;arrivalDate:string;retroactive:number}>();
+    if(!item)return Response.json({error:'Este pedido já venceu, foi tratado ou não existe.'},{status:409});
+    const now=new Date().toISOString(),when=new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short',timeZone:'America/Bahia'}).format(new Date(now)),retroactive=Number(item.retroactive)===1;
+    if(retroactive&&!management)return Response.json({error:'Somente Adm ou Gerência pode autorizar uma viagem fora do prazo.'},{status:403});
+    await env.DB!.prepare("UPDATE fuel_requests SET status='authorized',authorized_by=?,authorized_by_name=?,authorized_at=?,authorized_registered_at=? WHERE id=? AND status='pending'").bind(access.user.bootstrap?null:access.user.id,access.user.name,now,now,id).run();
+    await env.DB!.prepare('INSERT OR IGNORE INTO fuel_authorization_public_ids (fuel_request_id) VALUES (?)').bind(id).run();
+    const authorization=await env.DB!.prepare(`SELECT ${authorizationCodeSql('f')} AS code FROM fuel_requests f WHERE f.id=?`).bind(id).first<{code:string}>();
+    const authorizationCode=authorization?.code||`AU-${String(id).padStart(3,'0')}`;
+    await setVehicleFuelState(item.vehicleId,'authorized',{requestId:id,note:`${authorizationCode} (${item.requestCode}) autorizada`});
+    if(retroactive)await recordTripAudit({tripId:item.tripId,action:'autorizacao_registrada',actorName:access.user.name,effectiveAt:now,registeredAt:now,retroactive:true});
+    const viewers=await env.DB!.prepare('SELECT user_id AS id FROM trip_users WHERE trip_id=?').bind(item.tripId).all<{id:number}>();
+    const managers=await env.DB!.prepare("SELECT id FROM app_users WHERE active=1 AND group_name='gerencia'").all<{id:number}>();
+    const ids=[...new Set([...viewers.results.map(x=>x.id),...managers.results.map(x=>x.id)])];
+    const message=`${item.controlNumber} — ${item.vehicleLabel} — ${item.route}. ${authorizationCode} referente ao ${item.requestCode}, autorizado por ${access.user.name} em ${when}.`;
+    if(ids.length)await env.DB!.batch(ids.map(userId=>env.DB!.prepare('INSERT INTO app_notifications (user_id,title,message,href,created_at) VALUES (?,?,?,?,?)').bind(userId,'Abastecimento autorizado',message,`/autorizacoes?pedido=${id}`,now)));
+    return Response.json({authorized:true,authorizationCode,requestCode:item.requestCode,authorizedBy:access.user.name,authorizedAt:now});
+  }catch{return Response.json({error:'Não foi possível autorizar o pedido.'},{status:503})}
 }
 
 export const POST=withSystemLog(loggedPOST);

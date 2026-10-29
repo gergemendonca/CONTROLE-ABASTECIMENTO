@@ -1,25 +1,17 @@
-import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
-import {getSession,isManagementUser} from '../../../admin-auth';
-import {ensureTripCancellation,operationalTrip} from '@/app/lib/trip-cancellation';
+import {getSession,isManagementUser} from '../../admin-auth';
+import {additionalFuelingRange} from '@/app/lib/fueling-range';
 
-async function loggedPOST(req:Request,{params}:{params:Promise<{id:string}>}){
- const session=await getSession(req);
- if(!session||session.passwordChangeRequired||!isManagementUser(session))return Response.json({error:'Somente Adm ou Gerência pode cancelar abastecimento.'},{status:403});
+export async function GET(req:Request){
+ const user=await getSession(req);
+ if(!user||user.passwordChangeRequired)return Response.json({error:'Faça login para consultar a quilometragem.'},{status:401});
+ const vehicleId=Number(new URL(req.url).searchParams.get('vehicleId'));
+ if(!Number.isSafeInteger(vehicleId)||vehicleId<1)return Response.json({error:'Veículo inválido.'},{status:400});
  try{
-  const id=Number((await params).id),body=await req.json(),reason=String(body.reason||'').trim();
-  if(!Number.isSafeInteger(id)||id<=0||reason.length<3||reason.length>500)return Response.json({error:'Informe o motivo do cancelamento (3 a 500 caracteres).'},{status:400});
-  await ensureTripCancellation();
-  const trip=await env.DB!.prepare(`SELECT id,fuel_canceled_at FROM trips WHERE id=? AND ${operationalTrip('trips')}`).bind(id).first<{id:number;fuel_canceled_at:string|null}>();
-  if(!trip)return Response.json({error:'Viagem não encontrada.'},{status:404});
-  if(trip.fuel_canceled_at)return Response.json({error:'O abastecimento desta viagem já foi cancelado.'},{status:409});
-  const now=new Date().toISOString();
-  await env.DB!.batch([
-   env.DB!.prepare('UPDATE trips SET fuel_canceled_at=?,fuel_canceled_by_name=?,fuel_cancel_reason=? WHERE id=? AND fuel_canceled_at IS NULL').bind(now,session.name,reason,id),
-   env.DB!.prepare("UPDATE fuel_requests SET status='canceled' WHERE trip_id=?").bind(id),
-  ]);
-  return Response.json({canceled:true,message:'Abastecimento cancelado. A viagem foi preservada; litros, produtos e despesas deixam de compor os relatórios.'});
- }catch{return Response.json({error:'Não foi possível cancelar o abastecimento. Tente novamente.'},{status:503});}
+  const tripId=Number(new URL(req.url).searchParams.get('tripId')||0);
+  if(tripId&&(!Number.isSafeInteger(tripId)||tripId<1))return Response.json({error:'Viagem inválida.'},{status:400});
+  if(tripId&&!isManagementUser(user)&&!await env.DB!.prepare('SELECT 1 FROM trip_users WHERE trip_id=? AND user_id=?').bind(tripId,user.id).first())return Response.json({error:'Esta viagem não está associada ao seu usuário.'},{status:403});
+  const record=await env.DB!.prepare('SELECT MAX(odometer) AS odometer FROM fueling WHERE vehicle_id=?').bind(vehicleId).first<{odometer:number|null}>();
+  return Response.json({odometer:record?.odometer??null,additionalRange:tripId?await additionalFuelingRange(tripId,vehicleId):null},{headers:{'Cache-Control':'no-store'}});
+ }catch{return Response.json({error:'Não foi possível consultar a última quilometragem.'},{status:503});}
 }
-
-export const POST=withSystemLog(loggedPOST);

@@ -1,15 +1,34 @@
-import {additionalFuelingRange,fuelingRangeMessage,ensureEarlyFuelingNote,earlyFuelingReason} from '@/app/lib/fueling-range';
 import {withSystemLog} from '@/app/lib/system-log';
-import { env } from 'cloudflare:workers';
-import { validate } from '../common';
-import {getSession,type SessionUser} from '../../admin-auth';
-import {ensureFuelingFunding} from '@/app/lib/trip-fuel-options';
-import {ensureTripCancellation} from '@/app/lib/trip-cancellation';
-type Params={params:Promise<{id:string}>};
-const canChooseDriver=(user:SessionUser)=>!!user.bootstrap||user.groupName==='adm'||user.groupName==='gerencia';
-async function canLaunchFor(user:SessionUser,driverId:number){if(canChooseDriver(user))return true;if(user.groupName!=='motorista'||!user.roles.includes('solicitante'))return false;return !!await env.DB!.prepare('SELECT id FROM drivers WHERE id=? AND lower(name)=lower(?) LIMIT 1').bind(driverId,user.name).first();}
-async function loggedPUT(req:Request,{params}:Params){const session=await getSession(req);if(!session||session.passwordChangeRequired)return Response.json({error:'Faça login e troque sua senha antes de editar.'},{status:401});try{const id=Number((await params).id),input:any=await req.json(),data=await validate(input,!!session&&canChooseDriver(session));if(!Number.isSafeInteger(id)||!data)return Response.json({error:'Confira os dados do abastecimento.'},{status:400});if(!await canLaunchFor(session,data.driverId))return Response.json({error:'Você só pode editar abastecimento em seu próprio nome.'},{status:403});await ensureTripCancellation();const exists=await env.DB!.prepare("SELECT f.id,COALESCE(t.finalized_at,'') AS finalizedAt FROM fueling f LEFT JOIN trips t ON t.id=f.trip_id WHERE f.id=?").bind(id).first<{id:number;finalizedAt:string}>();if(!exists)return Response.json({error:'Registro não encontrado.'},{status:404});if(exists.finalizedAt)return Response.json({error:'O abastecimento pertence a uma viagem finalizada. Reabra a viagem no ADM antes de alterá-lo.'},{status:409});const duplicate=await env.DB!.prepare('SELECT id FROM fueling WHERE vehicle_id=? AND odometer=? AND id<>? LIMIT 1').bind(data.vehicleId,data.odometer,id).first();if(duplicate)return Response.json({error:'Já existe outro abastecimento deste veículo com esta quilometragem. Confira o KM informado.'},{status:409});const last=await env.DB!.prepare('SELECT MAX(odometer) AS odometer FROM fueling WHERE vehicle_id=?').bind(data.vehicleId).first<{odometer:number|null}>();if(last?.odometer!==null&&last?.odometer!==undefined&&data.odometer<last.odometer)return Response.json({error:`A quilometragem informada é inferior à última registrada para este carro (${last.odometer.toLocaleString('pt-BR')} km). Revise o painel do veículo.`},{status:409});let earlyNote:string|null=null;if(data.liters>0){const range=await additionalFuelingRange(data.tripId,data.vehicleId,id);if(range&&data.odometer<range.minimumOdometer){const reason=earlyFuelingReason(input.earlyReason);if(!reason)return Response.json({error:fuelingRangeMessage(range,data.odometer),earlyWarning:true},{status:409});earlyNote=`ABASTECIMENTO ANTECIPADO — ${reason}. Editado por ${session.name} em ${new Date().toISOString()}. Anterior: ${range.previousLiters} L em ${range.previousOdometer} km; atual: ${data.odometer} km; referência: 2,3 km/L.`;}}const request=await env.DB!.prepare("SELECT fr.id FROM fuel_requests fr WHERE fr.trip_id=? AND fr.status='authorized' AND fr.created_at>=datetime('now','-5 days') AND NOT EXISTS (SELECT 1 FROM fueling used WHERE used.fuel_request_id=fr.id AND used.id<>?) ORDER BY fr.authorized_at DESC,fr.id DESC LIMIT 1").bind(data.tripId,id).first<{id:number}>();await ensureEarlyFuelingNote();await ensureFuelingFunding();await env.DB!.batch([env.DB!.prepare('UPDATE fueling SET vehicle_id=?,driver_id=?,driver=?,liters=?,odometer=?,amount_cents=?,trip_id=?,fuel_request_id=?,early_note=COALESCE(?,early_note),paid_by_third_party=COALESCE(?,paid_by_third_party) WHERE id=?').bind(data.vehicleId,data.driverId,data.driverName,data.liters,data.odometer,data.total,data.tripId,request?.id||null,earlyNote,data.clientPaid,id),env.DB!.prepare('DELETE FROM fueling_items WHERE fueling_id=?').bind(id),...data.items.map(i=>env.DB!.prepare('INSERT INTO fueling_items (fueling_id,kind,quantity,amount_cents) VALUES (?,?,?,?)').bind(id,i.kind,i.quantity,i.amountCents))]);return Response.json({id,earlyNote,logDetails:earlyNote})}catch{return Response.json({error:'Falha ao editar. Tente novamente.'},{status:503})}}
-async function loggedDELETE(req:Request,{params}:Params){const session=await getSession(req);if(!session||session.passwordChangeRequired)return Response.json({error:'Faça login e troque sua senha antes de apagar.'},{status:401});try{const id=Number((await params).id);if(!Number.isSafeInteger(id))return Response.json({error:'Registro inválido.'},{status:400});await ensureTripCancellation();const record=await env.DB!.prepare("SELECT f.driver_id AS driverId,COALESCE(t.finalized_at,'') AS finalizedAt FROM fueling f LEFT JOIN trips t ON t.id=f.trip_id WHERE f.id=?").bind(id).first<{driverId:number;finalizedAt:string}>();if(!record)return Response.json({error:'Registro não encontrado.'},{status:404});if(record.finalizedAt)return Response.json({error:'O abastecimento pertence a uma viagem finalizada. Reabra a viagem no ADM antes de excluí-lo.'},{status:409});if(!await canLaunchFor(session,record.driverId))return Response.json({error:'Você só pode apagar abastecimento em seu próprio nome.'},{status:403});await env.DB!.batch([env.DB!.prepare('DELETE FROM fueling_items WHERE fueling_id=?').bind(id),env.DB!.prepare('DELETE FROM fueling WHERE id=?').bind(id)]);return Response.json({deleted:true})}catch{return Response.json({error:'Falha ao apagar. Tente novamente.'},{status:503})}}
+import {env} from 'cloudflare:workers';
+import {driverCodeSql,ensurePublicIds} from '@/app/lib/public-ids';
 
-export const PUT=withSystemLog(loggedPUT);
-export const DELETE=withSystemLog(loggedDELETE);
+export const dynamic='force-dynamic';
+
+async function syncRegisteredDrivers(){
+ await env.DB!.prepare("INSERT OR IGNORE INTO drivers (name) SELECT name FROM app_users WHERE active=1 AND group_name='motorista' AND NOT EXISTS (SELECT 1 FROM drivers d WHERE lower(d.name)=lower(app_users.name))").run();
+}
+
+export async function GET(){
+ try{
+  await syncRegisteredDrivers();
+  await ensurePublicIds();
+  const r=await env.DB!.prepare(`SELECT d.id,d.name,${driverCodeSql('d')} AS publicCode,CASE WHEN EXISTS (SELECT 1 FROM app_users u WHERE u.active=1 AND u.group_name='motorista' AND lower(u.name)=lower(d.name)) THEN 'usuario' ELSE 'freelancer' END AS source FROM drivers d WHERE EXISTS (SELECT 1 FROM app_users u WHERE u.active=1 AND u.group_name='motorista' AND lower(u.name)=lower(d.name)) OR NOT EXISTS (SELECT 1 FROM app_users u WHERE lower(u.name)=lower(d.name)) ORDER BY CASE WHEN EXISTS (SELECT 1 FROM app_users u WHERE u.active=1 AND u.group_name='motorista' AND lower(u.name)=lower(d.name)) THEN 0 ELSE 1 END,d.name COLLATE NOCASE`).all();
+  return Response.json({drivers:r.results});
+ }catch{return Response.json({error:'Não foi possível carregar os motoristas cadastrados.'},{status:503})}
+}
+
+async function loggedPOST(req:Request){
+ try{
+  const {name,freelancer}=await req.json() as {name?:string;freelancer?:boolean};
+  const clean=name?.trim();
+  if(!freelancer)return Response.json({error:'Motoristas permanentes devem ser cadastrados em Configurações, no grupo Motorista.'},{status:400});
+  if(!clean||clean.length>100)return Response.json({error:'Informe o nome do motorista freelancer.'},{status:400});
+  const existing=await env.DB!.prepare('SELECT id,name FROM drivers WHERE lower(name)=lower(?) LIMIT 1').bind(clean).first<{id:number;name:string}>();
+  if(existing){await ensurePublicIds();const item=await env.DB!.prepare(`SELECT d.id,d.name,${driverCodeSql('d')} AS publicCode FROM drivers d WHERE d.id=?`).bind(existing.id).first();return Response.json({driver:{...item,source:'freelancer'}});}
+  const driver=await env.DB!.prepare('INSERT INTO drivers (name) VALUES (?) RETURNING id,name').bind(clean).first();
+  await ensurePublicIds();const item=await env.DB!.prepare(`SELECT d.id,d.name,${driverCodeSql('d')} AS publicCode FROM drivers d WHERE d.id=?`).bind((driver as any).id).first();
+  return Response.json({driver:{...item,source:'freelancer'}},{status:201});
+ }catch{return Response.json({error:'Não foi possível cadastrar o freelancer. Verifique se o nome já existe.'},{status:409})}
+}
+
+export const POST=withSystemLog(loggedPOST);

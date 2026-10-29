@@ -52,9 +52,6 @@ export const trips=sqliteTable('trips',{
  canceledBy:integer('canceled_by').references(()=>appUsers.id),
  canceledByName:text('canceled_by_name'),
  cancelReason:text('cancel_reason'),
- finalizedAt:text('finalized_at'),
- finalizedBy:integer('finalized_by'),
- finalizedByName:text('finalized_by_name'),
 });
 
 export const whatsappContacts=sqliteTable('whatsapp_contacts',{

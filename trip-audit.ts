@@ -33,7 +33,10 @@ export async function recordTripAudit(input:{tripId:number;action:TripAuditActio
   .bind(input.tripId,input.action,input.actorName,input.effectiveAt,registeredAt,input.retroactive?1:0).run();
 }
 
-export const lateActivitySql=(tripAlias:string)=>`COALESCE((SELECT GROUP_CONCAT(action || '|' || actor_name || '|' || effective_at || '|' || registered_at, '§') FROM trip_audit audit WHERE audit.trip_id=${tripAlias}.id AND audit.retroactive=1),'') AS lateActivities`;
+// A auditoria é permanente, mas o alerta só aparece enquanto a viagem estiver
+// no passado. Corrigir a data para o futuro elimina o aviso visual sem apagar
+// o histórico técnico do que ocorreu.
+export const lateActivitySql=(tripAlias:string)=>`CASE WHEN COALESCE(${tripAlias}.arrival_date,${tripAlias}.travel_date)<date('now','-3 hours') THEN COALESCE((SELECT GROUP_CONCAT(action || '|' || actor_name || '|' || effective_at || '|' || registered_at, '§') FROM trip_audit audit WHERE audit.trip_id=${tripAlias}.id AND audit.retroactive=1),'') ELSE '' END AS lateActivities`;
 
 export function parseLateActivities(value:unknown):TripLateActivity[]{
  if(!value)return [];

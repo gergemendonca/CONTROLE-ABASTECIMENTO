@@ -1,22 +1,19 @@
-import {withSystemLog} from '@/app/lib/system-log';
 import {env} from 'cloudflare:workers';
-import {isAdmin} from '../../admin-auth';
+import {isAdmin} from '../admin-auth';
+import {controlSql,ensureTripControl} from '@/app/lib/trip-control';
 
-import {ensureVehicleConsumption} from '@/app/lib/vehicle-consumption';
-import {numericReading} from '@/app/lib/tank-estimate';
-
-type Context={params:Promise<{id:string}>};
-const validId=(value:string)=>{const id=Number(value);return Number.isSafeInteger(id)&&id>0?id:null};
-
-async function loggedPUT(req:Request,{params}:Context){
- if(!await isAdmin(req))return Response.json({error:'Acesso restrito à Área Adm.'},{status:403});
- try{const id=validId((await params).id),input=await req.json() as {label?:string;consumptionKmL?:unknown},clean=typeof input.label==='string'?input.label.trim():'';const supplied=Object.prototype.hasOwnProperty.call(input,'consumptionKmL'),value=input.consumptionKmL,consumption=value===undefined||value===null||value===''?null:numericReading(value);if(supplied&&value!==null&&value!==''&&value!==undefined&&(consumption===null||consumption<=0||consumption>100))return Response.json({error:'Informe o consumo em km/L, maior que zero e até 100.'},{status:400});await ensureVehicleConsumption();if(!id||!clean||clean.length>60)return Response.json({error:'Informe um veículo válido.'},{status:400});const vehicle=await env.DB!.prepare('SELECT id FROM vehicles WHERE id=?').bind(id).first();if(!vehicle)return Response.json({error:'Veículo não encontrado.'},{status:404});const duplicate=await env.DB!.prepare('SELECT id FROM vehicles WHERE lower(label)=lower(?) AND id<>? LIMIT 1').bind(clean,id).first();if(duplicate)return Response.json({error:'Já existe outro veículo com este nome ou placa.'},{status:409});const updated=await env.DB!.prepare('UPDATE vehicles SET label=?,consumption_km_l=CASE WHEN ? THEN ? ELSE consumption_km_l END WHERE id=? RETURNING id,label,consumption_km_l AS consumptionKmL').bind(clean,supplied?1:0,consumption,id).first();return Response.json({vehicle:updated});}catch{return Response.json({error:'Não foi possível editar o veículo.'},{status:503})}
+import {ensureTripFuelOptions} from '@/app/lib/trip-fuel-options';
+export async function GET(request:Request){
+ if(!await isAdmin(request))return Response.json({error:'Acesso restrito.'},{status:403});
+ await ensureTripControl();await ensureTripFuelOptions();
+ const url=new URL(request.url),tripIds=url.searchParams.getAll('trip').map(Number).filter(Number.isInteger),liters=url.searchParams.getAll('liters'),kms=url.searchParams.getAll('km'),contactIds=url.searchParams.getAll('contact').map(Number).filter(Number.isInteger);
+ if(!tripIds.length||tripIds.length!==liters.length||tripIds.length!==kms.length)return Response.json({error:'Dados da solicitação inválidos.'},{status:400});
+ const lines=['*SOLICITAÇÃO DE ABASTECIMENTO*',''];
+ for(let index=0;index<tripIds.length;index++){
+  const trip=await env.DB!.prepare(`SELECT t.id,${controlSql('t')},v.label AS vehicleLabel,t.route,COALESCE(t.departure_date,t.travel_date) AS departureDate,COALESCE(t.arrival_date,t.travel_date) AS arrivalDate FROM trips t JOIN vehicles v ON v.id=t.vehicle_id WHERE t.id=? AND COALESCE(t.no_fueling,0)=0`).bind(tripIds[index]).first<{controlNumber:string;vehicleLabel:string;route:string;departureDate:string;arrivalDate:string}>();
+  if(!trip)continue;
+  lines.push(`${index+1}. *Controle da viagem:* ${trip.controlNumber}`,`*Carro:* ${trip.vehicleLabel}`,`*Roteiro:* ${trip.route}`,`*Período:* ${String(trip.departureDate).split('-').reverse().join('/')} a ${String(trip.arrivalDate).split('-').reverse().join('/')}`,`*Litros solicitados:* ${liters[index]} L`,`*KM previsto:* ${kms[index]} km`,'');
+ }
+ if(contactIds.length){const marks=contactIds.map(()=>'?').join(',');const contacts=await env.DB!.prepare(`SELECT name FROM contacts WHERE id IN (${marks})`).bind(...contactIds).all();lines.push(`*Destinatários:* ${(contacts.results as any[]).map(contact=>contact.name).join(', ')}`)}
+ return Response.redirect('https://wa.me/?text='+encodeURIComponent(lines.join('\n')),302);
 }
-
-async function loggedDELETE(req:Request,{params}:Context){
- if(!await isAdmin(req))return Response.json({error:'Acesso restrito à Área Adm.'},{status:403});
- try{const id=validId((await params).id);if(!id)return Response.json({error:'Veículo inválido.'},{status:400});const vehicle=await env.DB!.prepare('SELECT id FROM vehicles WHERE id=?').bind(id).first();if(!vehicle)return Response.json({error:'Veículo não encontrado.'},{status:404});const [trip,fueling]=await Promise.all([env.DB!.prepare('SELECT id FROM trips WHERE vehicle_id=? LIMIT 1').bind(id).first(),env.DB!.prepare('SELECT id FROM fueling WHERE vehicle_id=? LIMIT 1').bind(id).first()]);if(trip||fueling)return Response.json({error:'Este veículo possui viagens ou abastecimentos vinculados e não pode ser apagado.'},{status:409});await env.DB!.prepare('DELETE FROM vehicles WHERE id=?').bind(id).run();return Response.json({deleted:true});}catch{return Response.json({error:'Não foi possível apagar o veículo.'},{status:503})}
-}
-
-export const PUT=withSystemLog(loggedPUT);
-export const DELETE=withSystemLog(loggedDELETE);
