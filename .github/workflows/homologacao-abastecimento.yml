@@ -18,6 +18,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       WORKER_NAME: controle-abastecimento-hml
+      HML_FUEL_INTEGRATION_TOKEN: ${{ secrets.HML_FUEL_INTEGRATION_TOKEN }}
       CI: "true"
     steps:
       - name: Conferir credencial do Cloudflare
@@ -46,6 +47,19 @@ jobs:
             pnpm exec wrangler d1 execute "$db_name" --remote --file="$file"
           done
           printf 'HML_DB_NAME=%s\nHML_DB_ID=%s\n' "$db_name" "$db_id" >> "$GITHUB_ENV"
+      - name: Semear dados fictícios no banco isolado
+        run: |
+          cat > "$RUNNER_TEMP/aba-hml-seed.sql" <<'SQL'
+          ALTER TABLE trips ADD COLUMN total_km INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE trips ADD COLUMN total_value_cents INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE fueling ADD COLUMN fuel_request_id INTEGER;
+          INSERT INTO vehicles (id,label) VALUES (23,'23000'),(22,'22000');
+          INSERT INTO trips (id,vehicle_id,travel_date,departure_date,arrival_date,route,total_km,total_value_cents)
+          VALUES (100,23,'2027-01-10','2027-01-10','2027-01-12','Homologação ida e volta',440,1000000);
+          INSERT INTO fueling (id,vehicle_id,driver,liters,odometer,created_at)
+          VALUES (200,23,'Motorista fictício',200,10000,'2027-01-10T09:00:00Z');
+          SQL
+          pnpm exec wrangler d1 execute "$HML_DB_NAME" --remote --file="$RUNNER_TEMP/aba-hml-seed.sql"
       - name: Vincular somente o D1 de homologação ao Worker
         run: |
           node --input-type=module <<'NODE'
@@ -60,10 +74,13 @@ jobs:
           writeFileSync(path, JSON.stringify({
             name, main: built.main, compatibility_date: built.compatibility_date,
             compatibility_flags: built.compatibility_flags, assets: built.assets, workers_dev: true,
+            vars: { TURISMO_SYNC_ORIGIN: "https://sd-tour-abastecimento-hml.appsdturismo.workers.dev" },
             d1_databases: [{ binding: "DB", database_name: database, database_id: process.env.HML_DB_ID }],
           }, null, 2));
+          if ((process.env.HML_FUEL_INTEGRATION_TOKEN ?? "").length < 32) throw new Error("Configure HML_FUEL_INTEGRATION_TOKEN no GitHub.");
           writeFileSync(join(process.env.RUNNER_TEMP, "aba-hml-secrets.json"), JSON.stringify({
             ADMIN_PASSWORD: randomBytes(32).toString("hex"),
+            FUEL_INTEGRATION_TOKEN: process.env.HML_FUEL_INTEGRATION_TOKEN,
             ADMIN_SESSION_SECRET: randomBytes(32).toString("hex"),
           }), { mode: 0o600 });
           NODE
@@ -84,4 +101,54 @@ jobs:
           assert.equal(response?.status, 403);
           assert.deepEqual(await response.json(), { error: "Acesso restrito." });
           console.log("Rota de importação disponível e protegida no Abastecimento de homologação.");
+          NODE
+      - name: Importar ida e volta fictícias entre os dois Workers
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          import { readFileSync } from "node:fs";
+          import { join } from "node:path";
+          const { ADMIN_PASSWORD: password } = JSON.parse(readFileSync(join(process.env.RUNNER_TEMP,"aba-hml-secrets.json"),"utf8"));
+          const base = "https://controle-abastecimento-hml.george-1b2.workers.dev";
+          const endpoint = base + "/api/admin/integracao-turismo/importar";
+          const json = { "Content-Type": "application/json" };
+          let cookie, entry, lastStatus;
+          for (let attempt = 0; attempt < 36; attempt++) {
+            const login = await fetch(base + "/api/admin-session", { method: "POST", headers: json, body: JSON.stringify({ username: "admin", password }), signal: AbortSignal.timeout(12000), redirect: "error" });
+            cookie = login.headers.get("set-cookie")?.split(";")[0];
+            lastStatus = "login " + login.status;
+            if (login.ok && cookie) {
+              const feed = await fetch(endpoint, { headers: { Cookie: cookie }, signal: AbortSignal.timeout(12000), redirect: "error" });
+              lastStatus = "fila " + feed.status;
+              if (feed.ok) entry = (await feed.json()).events.find(row => row.event.viagens.some(leg => leg.turismoViagemId === "hml-sheet-trip"));
+              else await feed.body?.cancel();
+              if (entry) break;
+            }
+            await new Promise(resolve => setTimeout(resolve, 5000));
+          }
+          assert.ok(entry && cookie, "Evento fictício indisponível: " + lastStatus);
+          const body = JSON.stringify({ cursor: entry.cursor, eventId: entry.event.eventId, outboundId: 100, outboundVehicle: 23, inboundVehicle: 22 });
+          const submit = () => fetch(endpoint, { method: "POST", headers: { ...json, Cookie: cookie, Origin: base }, body, signal: AbortSignal.timeout(15000), redirect: "error" });
+          const first = await submit();
+          const result = await first.json();
+          assert.equal(first.status, 201, JSON.stringify(result));
+          assert.equal(result.idaId, 100);
+          assert.ok(result.voltaId > 100);
+          const retry = await submit();
+          assert.equal(retry.status, 200);
+          assert.deepEqual(await retry.json(), { ...result, repetido: true });
+          NODE
+      - name: Confirmar dados gravados no D1 isolado
+        run: |
+          pnpm exec wrangler d1 execute "$HML_DB_NAME" --remote --json --command="SELECT vehicle_id,total_km,total_value_cents FROM trips ORDER BY id; SELECT vehicle_id,liters FROM fueling WHERE id=200;" > "$RUNNER_TEMP/hml-check.json"
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          import { readFileSync } from "node:fs";
+          import { join } from "node:path";
+          const [trips, fuel] = JSON.parse(readFileSync(join(process.env.RUNNER_TEMP,"hml-check.json"),"utf8"));
+          assert.deepEqual(trips.results, [
+            { vehicle_id: 23, total_km: 220, total_value_cents: 1000000 },
+            { vehicle_id: 22, total_km: 440, total_value_cents: 0 },
+          ]);
+          assert.deepEqual(fuel.results, [{ vehicle_id: 23, liters: 200 }]);
           NODE
