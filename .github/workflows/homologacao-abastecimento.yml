@@ -27,6 +27,16 @@ jobs:
             echo "::error::Segredo CLOUDFLARE_API_TOKEN indisponível no repositório."
             exit 1
           fi
+      - name: Conferir segredo compartilhado direto no Turismo
+        run: |
+          node --input-type=module <<'NODE'
+          const origin = "https://sd-tour-abastecimento-hml.appsdturismo.workers.dev";
+          const response = await fetch(origin + "/api/integration/fuel-trips", { headers: { Authorization: "Bearer " + process.env.HML_FUEL_INTEGRATION_TOKEN }, signal: AbortSignal.timeout(10000), redirect: "error" });
+          if (!response.ok) throw new Error("Fila do Turismo recusou a credencial do Abastecimento, HTTP " + response.status);
+          const data = await response.json();
+          if (!data.events.some(row => row.event.viagens.some(leg => leg.turismoViagemId === "hml-sheet-trip"))) throw new Error("Evento fictício ausente.");
+          console.log("Segredo compartilhado aceito pelo Turismo.");
+          NODE
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -113,7 +123,7 @@ jobs:
           const endpoint = base + "/api/admin/integracao-turismo/importar";
           const json = { "Content-Type": "application/json" };
           let cookie, entry, lastStatus;
-          for (let attempt = 0; attempt < 36; attempt++) {
+          for (let attempt = 0; attempt < 12; attempt++) {
             const login = await fetch(base + "/api/admin-session", { method: "POST", headers: json, body: JSON.stringify({ username: "admin", password }), signal: AbortSignal.timeout(12000), redirect: "error" });
             cookie = login.headers.get("set-cookie")?.split(";")[0];
             lastStatus = "login " + login.status;
@@ -121,7 +131,10 @@ jobs:
               const feed = await fetch(endpoint, { headers: { Cookie: cookie }, signal: AbortSignal.timeout(12000), redirect: "error" });
               lastStatus = "fila " + feed.status;
               if (feed.ok) entry = (await feed.json()).events.find(row => row.event.viagens.some(leg => leg.turismoViagemId === "hml-sheet-trip"));
-              else await feed.body?.cancel();
+              else {
+                const details = await feed.json().catch(() => null);
+                if (typeof details?.error === "string") lastStatus += " — " + details.error;
+              }
               if (entry) break;
             }
             await new Promise(resolve => setTimeout(resolve, 5000));
