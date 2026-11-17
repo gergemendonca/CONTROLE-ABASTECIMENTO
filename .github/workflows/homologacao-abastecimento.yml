@@ -1,0 +1,87 @@
+name: Homologação do Abastecimento
+on:
+  pull_request:
+    branches: ["main"]
+    paths: [".github/workflows/homologacao-abastecimento.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: controle-abastecimento-hml
+  cancel-in-progress: false
+jobs:
+  preview:
+    if: github.ref == 'refs/heads/integracao/homologacao-cloudflare' || (github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'integracao/homologacao-cloudflare')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      WORKER_NAME: controle-abastecimento-hml
+      CI: "true"
+    steps:
+      - name: Conferir credencial do Cloudflare
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::Segredo CLOUDFLARE_API_TOKEN indisponível no repositório."
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: corepack enable
+      - run: corepack prepare pnpm@11.25.0 --activate
+      - run: pnpm install --frozen-lockfile
+      - name: Compilar o Abastecimento
+        run: pnpm run build
+      - name: Criar D1 isolado e aplicar migrações
+        run: |
+          set -euo pipefail
+          db_name="aba-hml-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          pnpm exec wrangler d1 create "$db_name" --location enam | tee "$RUNNER_TEMP/d1-created"
+          db_id="$(sed -nE 's/.*"database_id"[[:space:]]*:[[:space:]]*"([0-9a-f-]{36})".*/\1/p' "$RUNNER_TEMP/d1-created" | head -n1)"
+          test -n "$db_id"
+          for file in drizzle/[0-9][0-9][0-9][0-9]_*.sql; do
+            pnpm exec wrangler d1 execute "$db_name" --remote --file="$file"
+          done
+          printf 'HML_DB_NAME=%s\nHML_DB_ID=%s\n' "$db_name" "$db_id" >> "$GITHUB_ENV"
+      - name: Vincular somente o D1 de homologação ao Worker
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from "node:fs";
+          import { randomBytes } from "node:crypto";
+          import { join } from "node:path";
+          const path = "dist/server/wrangler.json";
+          const built = JSON.parse(readFileSync(path, "utf8"));
+          const name = process.env.WORKER_NAME;
+          const database = process.env.HML_DB_NAME;
+          if (name !== "controle-abastecimento-hml" || !database.startsWith("aba-hml-")) throw new Error("Configuração fora da homologação");
+          writeFileSync(path, JSON.stringify({
+            name, main: built.main, compatibility_date: built.compatibility_date,
+            compatibility_flags: built.compatibility_flags, assets: built.assets, workers_dev: true,
+            d1_databases: [{ binding: "DB", database_name: database, database_id: process.env.HML_DB_ID }],
+          }, null, 2));
+          writeFileSync(join(process.env.RUNNER_TEMP, "aba-hml-secrets.json"), JSON.stringify({
+            ADMIN_PASSWORD: randomBytes(32).toString("hex"),
+            ADMIN_SESSION_SECRET: randomBytes(32).toString("hex"),
+          }), { mode: 0o600 });
+          NODE
+      - name: Publicar Worker de homologação
+        run: pnpm exec wrangler deploy --config dist/server/wrangler.json --secrets-file "$RUNNER_TEMP/aba-hml-secrets.json"
+      - name: Verificar rota de importação no Worker publicado
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          const url = "https://controle-abastecimento-hml.george-1b2.workers.dev/api/admin/integracao-turismo/importar";
+          let response;
+          for (let attempt = 0; attempt < 12; attempt++) {
+            response = await fetch(url, { signal: AbortSignal.timeout(10000), redirect: "error" });
+            if (response.status === 403 && response.headers.get("content-type")?.includes("application/json")) break;
+            await response.body?.cancel();
+            await new Promise(resolve => setTimeout(resolve, 5000));
+          }
+          assert.equal(response?.status, 403);
+          assert.deepEqual(await response.json(), { error: "Acesso restrito." });
+          console.log("Rota de importação disponível e protegida no Abastecimento de homologação.");
+          NODE
