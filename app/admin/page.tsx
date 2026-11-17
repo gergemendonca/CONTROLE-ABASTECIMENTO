@@ -1,4 +1,5 @@
 'use client';
+import {AppVersion} from '../components/app-version';
 
 import {useEffect,useState} from 'react';
 import DashboardClient from './dashboard-client';
@@ -15,5 +16,5 @@ export default function Admin(){
  if(checking)return <main className="grid min-h-screen place-items-center bg-slate-50 text-lg">Verificando acesso...</main>;
  if(canOpenAdm(user))return <DashboardClient/>;
  if(user)return <main className="grid min-h-screen place-items-center bg-slate-50 text-lg">Abrindo seu painel...</main>;
- return <main className="min-h-screen bg-slate-50 p-5"><section className="mx-auto mt-16 max-w-md rounded-3xl bg-white p-7 shadow"><h1 className="text-3xl font-bold">Área administrativa</h1><p className="mt-2 text-lg">Entre com seu próprio usuário e senha cadastrados no app.</p><form onSubmit={enter} className="mt-6 space-y-4"><input autoFocus autoCapitalize="none" value={username} onChange={event=>setUsername(event.target.value)} placeholder="Seu usuário" className="h-16 w-full rounded-xl border p-4 text-xl"/><input required type="password" value={password} onChange={event=>setPassword(event.target.value)} placeholder="Sua senha" className="h-16 w-full rounded-xl border p-4 text-2xl"/><button className="h-14 w-full rounded-xl bg-[#096a9b] text-xl font-bold text-white">Entrar na Área Adm</button></form>{error&&<p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-lg text-red-800">{error}</p>}</section></main>;
+ return <main className="min-h-screen bg-slate-50 p-5"><section className="mx-auto mt-16 max-w-md rounded-3xl bg-white p-7 shadow"><h1 className="text-3xl font-bold">Área administrativa</h1><AppVersion/><p className="mt-2 text-lg">Entre com seu próprio usuário e senha cadastrados no app.</p><form onSubmit={enter} className="mt-6 space-y-4"><input autoFocus autoCapitalize="none" value={username} onChange={event=>setUsername(event.target.value)} placeholder="Seu usuário" className="h-16 w-full rounded-xl border p-4 text-xl"/><input required type="password" value={password} onChange={event=>setPassword(event.target.value)} placeholder="Sua senha" className="h-16 w-full rounded-xl border p-4 text-2xl"/><button className="h-14 w-full rounded-xl bg-[#096a9b] text-xl font-bold text-white">Entrar na Área Adm</button></form>{error&&<p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-lg text-red-800">{error}</p>}</section></main>;
 }
