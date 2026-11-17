@@ -1,4 +1,4 @@
-export const APP_VERSION = "v156";
+export const APP_VERSION = "v157";
 export const RELEASE_TRACKING = "ABAS-156";
 
 export function AppVersion() {
