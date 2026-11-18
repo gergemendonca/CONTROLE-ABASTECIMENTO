@@ -3,7 +3,7 @@ import {AppVersion} from '../components/app-version';
 
 const cards=[
   {label:'Nova viagem',icon:'🚚',color:'bg-[#1677d8] text-white',href:'/admin/viagens/nova'},
-  {label:'Revisar viagens do Turismo',icon:'↻',color:'bg-[#096a9b] text-white',href:'/admin/viagens/turismo'},
+  {label:'Importar viagens',icon:'↻',color:'bg-[#096a9b] text-white',href:'/admin/viagens/turismo'},
   {label:'Editar viagens',icon:'✎',color:'bg-[#7441c8] text-white',href:'/admin/viagens'},
   {label:'Solicitar abastecimento',icon:'⛽',color:'bg-[#0b7184] text-white',href:'/solicitar-abastecimento?origem=adm'},
   {label:'Reenviar pedido WhatsApp',icon:'↗',color:'bg-[#178045] text-white',href:'/admin/reenvio-whatsapp'},
