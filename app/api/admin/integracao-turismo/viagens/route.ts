@@ -6,6 +6,12 @@ export const dynamic = "force-dynamic";
 const headers = { "Cache-Control": "no-store" };
 const error = (message: string, status: number) => Response.json({ error: message }, { status, headers });
 const day = /^\d{4}-\d{2}-\d{2}$/;
+function validDay(value: unknown): value is string {
+  if (typeof value !== "string" || !day.test(value)) return false;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
 type Trip = { id: string; prefix: string; route: string; departure: string; arrival: string; km: number | null };
 
 async function load(params: URLSearchParams): Promise<{ trips: Trip[]; next: string | null }> {
@@ -40,10 +46,13 @@ export async function GET(request: Request) {
   if (!user || !isManagementUser(user) || user.passwordChangeRequired) return error("Acesso restrito.", 403);
   if (!env.DB) return error("Banco do Abastecimento indisponível.", 503);
   const params = new URL(request.url).searchParams;
-  if (!day.test(params.get("from") ?? "") || (params.get("after")?.length ?? 0) > 300) return error("Consulta inválida.", 400);
-  params.delete("id");
+  const from = params.get("from");
+  const to = params.get("to");
+  const after = params.get("after") ?? "";
+  if (!validDay(from) || !validDay(to) || from > to || after.length > 300) return error("Confira as datas inicial e final.", 400);
   try {
-    const page = await load(params);
+    const page = await load(new URLSearchParams({ from, to, after }));
+    page.trips = page.trips.filter(trip => trip.departure >= from && trip.arrival <= to);
     await ensureLinks(env.DB);
     const ids = page.trips.map(trip => trip.id);
     const links = ids.length ? await env.DB.prepare(
@@ -64,11 +73,15 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   if (!body || typeof body.id !== "string" || !body.id || body.id.length > 300 ||
       !Number.isSafeInteger(body.km) || body.km < 0 || body.km > 100000) return error("Confira a viagem e a quilometragem.", 400);
+  const { from, to } = body;
+  if (!validDay(from) || !validDay(to) || from > to) return error("Confira as datas inicial e final.", 400);
   const db = env.DB;
   if (!db) return error("Banco do Abastecimento indisponível.", 503);
   try {
-    const { trips: [trip] } = await load(new URLSearchParams({ id: body.id, from: "0000-01-01" }));
-    if (!trip) return error("A viagem não está mais disponível no Turismo.", 404);
+    const { trips: [trip] } = await load(new URLSearchParams({ id: body.id, from, to }));
+    if (!trip || trip.departure < from || trip.arrival > to) {
+      return error("A viagem não está disponível para importação no período selecionado.", 409);
+    }
     if (trip.prefix !== body.prefix || trip.route !== body.route || trip.departure !== body.departure || trip.arrival !== body.arrival) {
       return error("A viagem mudou no Turismo. Atualize a lista e confira os dados novamente.", 409);
     }
