@@ -41,10 +41,11 @@ async function loggedPOST(req:Request){
    const isRetroactive=!!trip&&trip.arrivalDate<today();
    if(!trip||(!management&&isRetroactive))return Response.json({error:'A viagem está sem abastecimento, cancelada ou fora do período permitido para seu usuário.'},{status:409});
    const total=Number(trip.totalValueCents||0);
-   if(total<=0)return Response.json({error:'Esta viagem não possui valor total válido. Edite a viagem antes de solicitar autorização.'},{status:400});
+   const unpaid=item.paymentStatus==='nao_pago'||item.paymentStatus==='apos_viagem';
+   if(!unpaid&&total<=0)return Response.json({error:'Esta viagem não possui valor total válido. Edite a viagem antes de solicitar autorização.'},{status:400});
    if(item.paymentStatus==='total'&&item.outstandingCents!==0)return Response.json({error:'Viagem totalmente paga não pode ter valor em aberto.'},{status:400});
    if(item.paymentStatus==='parcial'&&(item.outstandingCents<=0||item.outstandingCents>=total))return Response.json({error:'Em pagamento parcial, o valor em aberto deve ser maior que zero e menor que o valor total da viagem.'},{status:400});
-   if((item.paymentStatus==='nao_pago'||item.paymentStatus==='apos_viagem')&&item.outstandingCents!==total)return Response.json({error:'O valor em aberto deve ser exatamente igual ao valor total da viagem.'},{status:400});
+   const outstandingCents=unpaid?Math.max(0,total):item.outstandingCents;
    if(extraordinary&&!management)return Response.json({error:'Somente Adm ou Gerência pode solicitar abastecimento extraordinário.'},{status:403});
    const alreadyFueled=await env.DB!.prepare(`SELECT t.id FROM trips t WHERE t.id=? AND ${tripFueledSql('t')} LIMIT 1`).bind(item.tripId).first();
    const inProgress=!!trip&&trip.departureDate<=today()&&trip.arrivalDate>=today();
@@ -52,7 +53,7 @@ async function loggedPOST(req:Request){
    if(alreadyFueled&&!extraordinary)return Response.json({error:'O veículo desta viagem já tem abastecimento inicial vinculado. Use a opção de abastecimento extraordinário se a viagem ainda estiver em curso.'},{status:409});
    const existing=await env.DB!.prepare(`SELECT fr.id FROM fuel_requests fr WHERE fr.vehicle_id=? AND fr.status IN ('pending','authorized') AND ${requestUnusedSql('fr')} LIMIT 1`).bind(trip!.vehicleId).first();
    if(existing)return Response.json({error:'Este carro já possui um pedido pendente de autorização.'},{status:409});
-   const inserted=await env.DB!.prepare("INSERT INTO fuel_requests (trip_id,vehicle_id,requested_by,requested_by_name,liters,route_km,payment_status,outstanding_cents,client_paid,retroactive,extraordinary,status,created_at,registered_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,'pending',?,?)").bind(item.tripId,trip!.vehicleId,access.user.bootstrap?null:access.user.id,access.user.name,item.liters,item.routeKm,item.paymentStatus,item.outstandingCents,item.clientPaid?1:0,isRetroactive?1:0,extraordinary?1:0,now,now).run();
+   const inserted=await env.DB!.prepare("INSERT INTO fuel_requests (trip_id,vehicle_id,requested_by,requested_by_name,liters,route_km,payment_status,outstanding_cents,client_paid,retroactive,extraordinary,status,created_at,registered_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,'pending',?,?)").bind(item.tripId,trip!.vehicleId,access.user.bootstrap?null:access.user.id,access.user.name,item.liters,item.routeKm,item.paymentStatus,outstandingCents,item.clientPaid?1:0,isRetroactive?1:0,extraordinary?1:0,now,now).run();
    // A exceção foi assumida: a viagem deixa de estar marcada como "sem abastecimento"
    // para que os cartões reflitam o novo pedido (laranja, azul e depois verde).
    if(extraordinary)await env.DB!.prepare('UPDATE trips SET no_fueling=0 WHERE id=?').bind(item.tripId).run();
