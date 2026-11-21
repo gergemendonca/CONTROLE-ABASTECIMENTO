@@ -16,7 +16,7 @@ async function loadPage(cursor: number) {
   endpoint.searchParams.set("cursor", String(cursor));
   const response = await fetch(endpoint, {
     headers: { Authorization: "Bearer " + token },
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(10000),
   });
   if (!response.ok) throw new Error("O Turismo não disponibilizou o lote de viagens.");
